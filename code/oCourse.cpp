@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -34,6 +34,7 @@
 #include "meosexception.h"
 #include <cassert>
 #include "gdioutput.h"
+#include "Table.h"
 #include <algorithm>
 
 //////////////////////////////////////////////////////////////////////
@@ -83,7 +84,7 @@ bool oCourse::Write(xmlparser &xml)
   xml.startTag("Course");
 
   xml.write("Id", Id);
-  xml.write("Updated", Modified.getStamp());
+  xml.write("Updated", getStamp());
   xml.write("Name", Name);
   xml.write("Length", Length);
   xml.write("Controls", getControls());
@@ -113,7 +114,7 @@ void oCourse::Set(const xmlobject *xo)
       Name=it->getw();
     }
     else if (it->is("Controls")){
-      importControls(it->getRaw(), false);
+      importControls(it->getRaw(), false, false);
     }
     else if (it->is("Legs")) {
       importLegLengths(it->getRaw(), false);
@@ -265,7 +266,7 @@ void oCourse::splitControls(const string &ctrls, vector<int> &nr) {
   }
 }
 
-bool oCourse::importControls(const string &ctrls, bool updateLegLengths) {
+bool oCourse::importControls(const string &ctrls, bool setChanged, bool updateLegLengths) {
   int oldNC = nControls;
   vector<int> oldC;
   for (int k = 0; k<nControls; k++)
@@ -324,7 +325,8 @@ bool oCourse::importControls(const string &ctrls, bool updateLegLengths) {
     changed |= oldC[k] != Controls[k]->getId();
 
   if (changed) {
-    updateChanged();
+    if (setChanged)
+      updateChanged();
 
     oe->punchIndex.clear();
   }
@@ -453,7 +455,8 @@ int oCourse::distance(const SICard &card)
   for (int k=0;k<nControls;k++) {
     if (Controls[k]->isRogaining(hasRogaining()) || 
         Controls[k]->getStatus() == oControl::StatusBad || 
-        Controls[k]->getStatus() == oControl::StatusOptional)
+        Controls[k]->getStatus() == oControl::StatusOptional ||
+        Controls[k]->getStatus() == oControl::StatusBadNoTiming)
       continue;
 
     if (Controls[k]->getStatus() == oControl::StatusMultiple) {
@@ -1322,6 +1325,7 @@ bool oCourse::constructLoopKeys(int cc, vector< vector<pControl> > &loopKeys, ve
 void oCourse::changedObject() {
   if (oe)
     oe->globalModification = true;
+  oe->sqlCourses.changed = true;
 }
 
 int oCourse::getCourseControlId(int controlIx) const {
@@ -1436,3 +1440,120 @@ void oCourse::getClasses(vector<pClass> &usageClass) const  {
   }
 }
 
+const shared_ptr<Table> &oCourse::getTable(oEvent *oe) {
+  oe->synchronizeList(oListId::oLCourseId);
+  oClassList::iterator it;
+  int numCtrl = 20;
+  vector <pCourse> crs;
+  oe->getCourses(crs);
+  for (pCourse pc : crs)
+    numCtrl = max(numCtrl, pc->getNumControls() + 5);
+
+  static int generatedNumCtrl = 0;
+
+  if (generatedNumCtrl != numCtrl || !oe->hasTable("course")) {
+    auto table = make_shared<Table>(oe, 20, L"Banor", "courses");
+
+    table->addColumn("Id", 70, true, true);
+    table->addColumn("Ändrad", 70, false);
+    table->addColumn("Namn", 200, false);
+    table->addColumn("Startande", 70, true);
+    table->addColumn("Klasser", 200, false);
+
+    for (int i = 0; i < numCtrl; i++)
+      table->addColumn("#C" + itos(i + 1), 40, true, true);
+
+    generatedNumCtrl = numCtrl;
+    oe->oCourseData->buildTableCol(table.get());
+    oe->setTable("course", table);
+  }
+
+  return oe->getTable("course");
+}
+
+void oCourse::generateTableData(oEvent *oe, Table &table, oCourse *add) {
+  if (add) {
+    add->addTableRow(table);
+    return;
+  }
+
+  oe->synchronizeList(oListId::oLCourseId);
+  oClassList::iterator it;
+
+  vector <pCourse> crs;
+  oe->getCourses(crs);
+  for (pCourse pc : crs)
+    pc->addTableRow(table);
+}
+
+void oCourse::addTableRow(Table &table) const {
+  pCourse it = pCourse(this);
+  table.addRow(getId(), it);
+
+  int row = 0;
+  table.set(row++, *it, TID_ID, itow(getId()), false);
+  table.set(row++, *it, TID_MODIFIED, getTimeStamp(), false);
+  table.set(row++, *it, TID_NAME, getName(), true);
+
+  table.set(row++, *it, TID_NUM, itow(getNumUsedMaps(true)), false);
+  vector<pClass> cls;
+  getClasses(cls);
+  sort(cls.begin(), cls.end(), [](const pClass &a, const pClass &b) {return *a < *b; });
+  wstring clsStr;
+  for (pClass c : cls) {
+    if (!clsStr.empty())
+      clsStr += L", ";
+    clsStr += c->getName();
+  }
+  table.set(row++, *it, TID_CLASSNAME, clsStr, false);
+
+  for (int i = 0; i < getNumControls(); i++) {
+    table.set(row++, *it, 100+i, Controls[i] ? itow(Controls[i]->getId()) : L"", true);
+  }
+  oe->oCourseData->fillTableCol(*this, table, true);
+}
+
+pair<int, bool> oCourse::inputData(int id, const wstring &input,
+                                   int inputId, wstring &output, bool noUpdate) {
+  synchronize(false);
+
+  if (id>1000) {
+    return oe->oCourseData->inputData(this, id, input,
+                                      inputId, output, noUpdate);
+  }
+  switch (id) {
+  case TID_NAME:
+    setName(input);
+    synchronize();
+    output = getName();
+    break;
+  }
+
+  if (id >= 100) { 
+    int cix = id - 100;
+    int v = _wtoi(input.c_str());
+    pControl ctrl = oe->getControl(v);
+    if (!ctrl && v > 32 && v < 300)
+      ctrl = oe->addControl(v, v, L"");
+
+    if (ctrl && (cix == 0 || cix <= getNumControls())) {
+      if (cix == getNumControls())
+        addControl(ctrl->getId());
+      else {
+        Controls[cix] = ctrl;
+        updateChanged();
+      }
+      oe->reEvaluateCourse(getId(), false);
+      synchronize(true);
+    }
+  }
+
+  return make_pair(0, false);
+}
+
+void oCourse::fillInput(int id, vector< pair<wstring, size_t> > &out, size_t &selected) {
+  if (id>1000) {
+    oe->oCourseData->fillInput(this, id, 0, out, selected);
+    return;
+  }
+}

@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -67,6 +67,7 @@
 #include "autocomplete.h"
 #include "image.h"
 #include "csvparser.h"
+#include "generalresult.h"
 
 int defaultCodePage = 1252;
 
@@ -115,7 +116,7 @@ HHOOK g_hhk; //- handle to the hook procedure.
 
 HWND hMainTab=NULL;
 
-list<TabObject> *tabList=0;
+list<TabObject> *tabList = nullptr;
 void scrollVertical(gdioutput *gdi, int yInc, HWND hWnd);
 static int currentFocusIx = 0;
 
@@ -197,7 +198,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
   int       nCmdShow)
 {
   hInst = hInstance; // Store instance handle in our global variable
-  
+    
   atexit(dumpLeaks);	//
   _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 
@@ -221,17 +222,26 @@ int APIENTRY WinMain(HINSTANCE hInstance,
     RunnerStatusOrderMap[k] = 0;
   }
   RunnerStatusOrderMap[StatusOK] = 0;
-  RunnerStatusOrderMap[StatusMAX] = 1;
-  RunnerStatusOrderMap[StatusMP] = 2;
-  RunnerStatusOrderMap[StatusDNF] = 3;
-  RunnerStatusOrderMap[StatusDQ] = 4;
-  RunnerStatusOrderMap[StatusCANCEL] = 5;
-  RunnerStatusOrderMap[StatusDNS] = 6;
-  RunnerStatusOrderMap[StatusUnknown] = 7;
-  RunnerStatusOrderMap[StatusNotCompetiting] = 8;
+  RunnerStatusOrderMap[StatusNoTiming] = 1;
+  RunnerStatusOrderMap[StatusOutOfCompetition] = 2;
+
+  RunnerStatusOrderMap[StatusMAX] = 3;
+  RunnerStatusOrderMap[StatusMP] = 4;
+  RunnerStatusOrderMap[StatusDNF] = 5;
+  RunnerStatusOrderMap[StatusDQ] = 6;
+  RunnerStatusOrderMap[StatusCANCEL] = 7;
+  RunnerStatusOrderMap[StatusDNS] = 8;
+  RunnerStatusOrderMap[StatusUnknown] = 9;
+  RunnerStatusOrderMap[StatusNotCompetiting] = 10;
 
   lang.init();
   StringCache::getInstance().init();
+  
+  for (RunnerStatus st : getAllRunnerStatus()) {
+    if (st != StatusOK)
+      assert(RunnerStatusOrderMap[st] > 0);
+    oAbstractRunner::encodeStatus(st);
+  }
 
   GetCurrentDirectory(MAX_PATH, programPath);
   bool utfRecode = false;
@@ -284,7 +294,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
     return 0;
   }
 
-  if (fileExist(settings)) {
+  if (fileExists(settings)) {
     gEvent->loadProperties(settings);
   }
   else {
@@ -293,22 +303,24 @@ int APIENTRY WinMain(HINSTANCE hInstance,
     getUserFile(oldSettings, L"meospref.xml");
     gEvent->loadProperties(oldSettings);
   }
-  
+  gEvent->clear();
+
   lang.get().addLangResource(L"English", L"104");
   lang.get().addLangResource(L"Svenska", L"103");
   lang.get().addLangResource(L"Deutsch", L"105");
   lang.get().addLangResource(L"Dansk", L"106");
   lang.get().addLangResource(L"Český", L"108");
   lang.get().addLangResource(L"Français", L"110");
+  lang.get().addLangResource(L"Español", L"111");
   lang.get().addLangResource(L"Russian", L"107");
 
-  if (fileExist(L"extra.lng")) {
+  if (fileExists(L"extra.lng")) {
     lang.get().addLangResource(L"Extraspråk", L"extra.lng");
   }
   else {
     wchar_t lpath[260];
     getUserFile(lpath, L"extra.lng");
-    if (fileExist(lpath))
+    if (fileExists(lpath))
       lang.get().addLangResource(L"Extraspråk", lpath);
   }
 
@@ -414,8 +426,23 @@ int APIENTRY WinMain(HINSTANCE hInstance,
   else
     return ANSI;
 }*/
-
-  gdi_main->setFont(gEvent->getPropertyInt("TextSize", 0),
+  int defSize = 0;
+  {
+    RECT desktop;
+    const HWND hDesktop = GetDesktopWindow();
+    // Get the size of screen to the variable desktop
+    GetWindowRect(hDesktop, &desktop);
+    int d = max(desktop.right, desktop.bottom);
+    if (d <= 1024)
+      defSize = 0;
+    else if (d <= 2000)
+      defSize = 1;
+    else if (d <= 2500)
+      defSize = 2;
+    else
+      defSize = 3;
+  }
+  gdi_main->setFont(gEvent->getPropertyInt("TextSize", defSize),
                     gEvent->getPropertyString("TextFont", L"Arial"));
 
   if (hSplash != nullptr) {
@@ -452,10 +479,10 @@ int APIENTRY WinMain(HINSTANCE hInstance,
   // Main message loop:
   mainMessageLoop(hAccelTable, 0);
 
-  tabAutoRegister(0);
+  TabAuto::tabAutoRegister(nullptr);
   tabList->clear();
   delete tabList;
-  tabList=0;
+  tabList = nullptr;
 
   delete autoTask;
   autoTask = 0;
@@ -469,14 +496,14 @@ int APIENTRY WinMain(HINSTANCE hInstance,
       }
     }
   }
-
+  gdi_main = nullptr;
   gdi_extra.clear();
 
   if (gEvent)
     gEvent->saveProperties(settings);
 
   delete gEvent;
-  gEvent = 0;
+  gEvent = nullptr;
 
   initMySQLCriticalSection(false);
 
@@ -703,6 +730,14 @@ LRESULT CALLBACK KeyboardProc(int code, WPARAM wParam, LPARAM lParam)
         gdi->keyCommand(KC_FINDBACK);
     }
   }
+  else if (wParam == 'A' && ctrlPressed) {
+    if (gdi)
+      gdi->keyCommand(KC_MARKALL);
+  }
+  else if (wParam == 'D' && ctrlPressed) {
+    if (gdi)
+      gdi->keyCommand(KC_CLEARALL);
+  }
   else if (wParam == VK_DELETE) {
     if (gdi)
       gdi->keyCommand(KC_DELETE);
@@ -755,8 +790,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
   int xp = gEvent->getPropertyInt("xpos", 50);
   int yp = gEvent->getPropertyInt("ypos", 20);
 
-  int xs = gEvent->getPropertyInt("xsize", max(850, min(int(rc.right)-yp, 1124)));
-  int ys = gEvent->getPropertyInt("ysize", max(650, min(int(rc.bottom)-yp-40, 800)));
+  int xs = gEvent->getPropertyInt("xsize", max(850, min<int>(int(rc.right)-yp, (rc.right*9)/10)));
+  int ys = gEvent->getPropertyInt("ysize", max(650, min<int>(int(rc.bottom)-yp-40, (rc.bottom*8)/10)));
 
   gEvent->setProperty("ypos", yp + 16);
   gEvent->setProperty("xpos", xp + 32);
@@ -896,7 +931,7 @@ gdioutput *createExtraWindow(const string &tag, const wstring &title, int max_x,
   else {
     gdi->initRecorder(&gdi_main->getRecorder());
   }
-  SetWindowLong(hWnd, GWL_USERDATA, gdi_extra.size());
+  SetWindowLongPtr(hWnd, GWLP_USERDATA, gdi_extra.size());
   currentFocusIx = gdi_extra.size();
   gdi_extra.push_back(gdi);
 
@@ -968,6 +1003,9 @@ void createTabs(bool force, bool onlyMain, bool skipTeam, bool skipSpeaker,
   if (!force && onlyMain==onlyMainP && skipTeam==skipTeamP && skipSpeaker==skipSpeakerP &&
       skipEconomy==skipEconomyP && skipLists==skipListsP &&
       skipRunners==skipRunnersP && skipControls==skipControlsP && skipCourses == skipCoursesP)
+    return;
+
+  if (!tabList)
     return;
 
   onlyMainP = onlyMain;
@@ -1042,6 +1080,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
   int wmId, wmEvent;
   PAINTSTRUCT ps;
   HDC hdc;
+  static bool connectionAlert = false;
 
   switch (message)
   {
@@ -1054,7 +1093,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
       {
         TabAuto *ta = (TabAuto *)gdi_main->getTabs().get(TAutoTab);
         tabList->push_back(TabObject(ta, "Automater"));
-        tabAutoRegister(ta);
+        TabAuto::tabAutoRegister(ta);
       }
       tabList->push_back(TabObject(gdi_main->getTabs().get(TSpeakerTab), "Speaker"));
       tabList->push_back(TabObject(gdi_main->getTabs().get(TClassTab), "Klasser"));
@@ -1218,9 +1257,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_USER + 5:
       if (gdi_main)
         gdi_main->addInfoBox("ainfo", L"info:advanceinfo", 10000);
-
       break;
-    
+
+    case WM_USER + 6:
+      if (gdi_main && lParam) {
+        gdioutput* g = (gdioutput*)lParam;
+        wstring msg = g->getDelayedAlert();
+        if (!connectionAlert) {
+          connectionAlert = true;
+          gdi_main->alert(msg);
+          connectionAlert = false;
+        }
+      }
+      break;
+
     case WM_COMMAND:
       wmId    = LOWORD(wParam);
       wmEvent = HIWORD(wParam);
@@ -1384,9 +1434,9 @@ LRESULT CALLBACK WorkSpaceWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM
   PAINTSTRUCT ps;
   HDC hdc;
 
-  LONG ix = GetWindowLong(hWnd, GWL_USERDATA);
+  LONG_PTR ix = GetWindowLongPtr(hWnd, GWLP_USERDATA);
   gdioutput *gdi = 0;
-  if (ix < LONG(gdi_extra.size()))
+  if (ix < LONG_PTR(gdi_extra.size()))
     gdi = gdi_extra[ix];
 
   if (gdi) {

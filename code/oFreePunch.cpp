@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,7 +31,6 @@
 #include "Localizer.h"
 #include "intkeymapimpl.hpp"
 #include "socket.h"
-#include "meosdb/sqltypes.h"
 #include "gdioutput.h"
 
 bool oFreePunch::disableHashing = false;
@@ -66,7 +65,7 @@ bool oFreePunch::Write(xmlparser &xml)
   xml.write("Time", Time);
   xml.write("Type", Type);
   xml.write("Id", Id);
-  xml.write("Updated", Modified.getStamp());
+  xml.write("Updated", getStamp());
   xml.endTag();
 
   return true;
@@ -146,10 +145,9 @@ bool oFreePunch::canRemove() const
   return true;
 }
 
-Table *oEvent::getPunchesTB()//Table mode
-{
-  if (tables.count("punch") == 0) {
-    Table *table=new Table(this, 20, L"Stämplingar", "punches");
+const shared_ptr<Table> &oFreePunch::getTable(oEvent *oe) {
+  if (!oe->hasTable("punch")) {
+    auto table = make_shared<Table>(oe, 20, L"Stämplingar", "punches");
     table->addColumn("Id", 70, true, true);
     table->addColumn("Ändrad", 150, false);
     table->addColumn("Bricka", 70, true);
@@ -158,12 +156,10 @@ Table *oEvent::getPunchesTB()//Table mode
     table->addColumn("Löpare", 170, false);
     table->addColumn("Lag", 170, false);
     table->addColumn("Klass", 170, false);
-    tables["punch"] = table;
-    table->addOwnership();
+    oe->setTable("punch", table);
   }
 
-  tables["punch"]->update();
-  return tables["punch"];
+  return oe->getTable("punch");
 }
 
 void oEvent::generatePunchTableData(Table &table, oFreePunch *addPunch)
@@ -206,8 +202,8 @@ void oFreePunch::addTableRow(Table &table) const {
   table.set(row++, it, TID_CLASSNAME, r ? r->getClass(true) : L"", false, cellEdit);
 }
 
-bool oFreePunch::inputData(int id, const wstring &input,
-                           int inputId, wstring &output, bool noUpdate)
+pair<int, bool> oFreePunch::inputData(int id, const wstring &input,
+                                      int inputId, wstring &output, bool noUpdate)
 {
   synchronize(false);
   switch(id) {
@@ -228,7 +224,7 @@ bool oFreePunch::inputData(int id, const wstring &input,
       synchronize(true);
       output = getType();
   }
-  return false;
+  return make_pair(0, false);
 }
 
 void oFreePunch::fillInput(int id, vector< pair<wstring, size_t> > &out, size_t &selected)
@@ -449,7 +445,7 @@ pFreePunch oEvent::addFreePunch(int time, int type, int card, bool updateStartFi
 
   punches.push_back(ofp);
   pFreePunch fp=&punches.back();
-  fp->addToEvent();
+  fp->addToEvent(this, &ofp);
   oFreePunch::rehashPunches(*this, card, fp);
   insertIntoPunchHash(card, type, time);
 
@@ -486,7 +482,7 @@ pFreePunch oEvent::addFreePunch(int time, int type, int card, bool updateStartFi
           tr->synchronize();
           if (type == startType) {
             if (tr->getClassRef(false) && !tr->getClassRef(true)->ignoreStartPunch())
-              tr->setStartTime(time, true, false);
+              tr->setStartTime(time, true, ChangeType::Update);
           }
           else
             tr->setFinishTime(time);
@@ -494,7 +490,7 @@ pFreePunch oEvent::addFreePunch(int time, int type, int card, bool updateStartFi
           // Direct result
           if (type == finishType && tr->getClassRef(false) && tr->getClassRef(true)->hasDirectResult()) {
             if (tr->getCourse(false) == 0 && tr->getCard() == 0) {
-              tr->setStatus(StatusOK, true, false, true);
+              tr->setStatus(StatusOK, true, oBase::ChangeType::Update, true);
             }
             else if (tr->getCourse(false) != 0 && tr->getCard() == 0) {
               pCard card = allocateCard(tr);
@@ -519,10 +515,10 @@ pFreePunch oEvent::addFreePunch(oFreePunch &fp) {
   insertIntoPunchHash(fp.CardNo, fp.Type, fp.Time);
   punches.push_back(fp);
   pFreePunch fpz=&punches.back();
-  fpz->addToEvent();
+  fpz->addToEvent(this, &fp);
   oFreePunch::rehashPunches(*this, fp.CardNo, fpz);
 
-  if (!fpz->existInDB() && HasDBConnection) {
+  if (!fpz->existInDB() && hasDBConnection()) {
     fpz->changed = true;
     fpz->synchronize();
   }
@@ -540,8 +536,8 @@ void oEvent::removeFreePunch(int Id) {
         classChanged(r->Class, true);
       }
       pFreePunch fp = &*it;
-      if (HasDBConnection)
-        msRemove(fp);
+      if (hasDBConnection())
+        sqlRemove(fp);
       //punchIndex[it->itype].remove(it->CardNo);
       PunchIndexType &ix = punchIndex[it->iHashType];
       pair<PunchConstIterator, PunchConstIterator> res = ix.equal_range(it->CardNo);
@@ -722,6 +718,7 @@ void oFreePunch::changedObject() {
   pRunner r = getTiedRunner();
   if (r && tMatchControlId>0)
     r->markClassChanged(tMatchControlId);
+  oe->sqlPunches.changed = true;
 }
 
 bool oEvent::hasHiredCardData() {
@@ -756,8 +753,8 @@ void oEvent::setHiredCard(int cardNo, bool flag) {
       hiredCardHash.erase(cardNo);
       for (auto it = punches.begin(); it != punches.end();) {
         if (!it->isRemoved() && it->isHiredCard() && it->CardNo == cardNo) {
-          if (HasDBConnection)
-            msRemove(&*it);
+          if (hasDBConnection())
+            sqlRemove(&*it);
 
           auto toErase = it;
           ++it;
@@ -782,8 +779,8 @@ void oEvent::clearHiredCards() {
   vector<int> toRemove;
   for (auto it = punches.begin(); it != punches.end();) {
     if (!it->isRemoved() && it->isHiredCard()) {
-      if (HasDBConnection)
-        msRemove(&*it);
+      if (hasDBConnection())
+        sqlRemove(&*it);
 
       auto toErase = it;
       ++it;

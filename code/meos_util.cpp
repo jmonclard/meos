@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -745,19 +745,26 @@ const wstring &itow(int i) {
   return res;
 }
 
-wstring itow(unsigned int i) {
-  wchar_t bf[32];
-  _ultow_s(i, bf, 10);
-  return bf;
-}
-
 wstring itow(unsigned long i) {
   wchar_t bf[32];
   _ultow_s(i, bf, 10);
   return bf;
 }
 
-wstring itow(__int64 i) {
+
+wstring itow(unsigned int i) {
+  wchar_t bf[32];
+  _ultow_s(i, bf, 10);
+  return bf;
+}
+
+wstring itow(int64_t i) {
+  wchar_t bf[32];
+  _i64tow_s(i, bf, 32, 10);
+  return bf;
+}
+
+wstring itow(uint64_t i) {
   wchar_t bf[32];
   _i64tow_s(i, bf, 32, 10);
   return bf;
@@ -786,12 +793,20 @@ string itos(unsigned long i)
   return bf;
 }
 
-string itos(__int64 i)
+string itos(int64_t i)
 {
   char bf[32];
   _i64toa_s(i, bf, 32, 10);
   return bf;
 }
+
+string itos(uint64_t i)
+{
+  char bf[32];
+  _ui64toa_s(i, bf, 32, 10);
+  return bf;
+}
+
 
 bool filterMatchString(const string &c, const char *filt_lc)
 {
@@ -867,9 +882,9 @@ wstring trim(const wstring &s) {
   else return L"";
 }
 
-bool fileExist(const wchar_t *file)
+bool fileExists(const wstring &file)
 {
-  return GetFileAttributes(file) != INVALID_FILE_ATTRIBUTES;
+  return GetFileAttributes(file.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
 bool stringMatch(const wstring &a, const wstring &b) {
@@ -1818,6 +1833,60 @@ wstring makeValidFileName(const wstring &input, bool strict) {
   return out;
 }
 
+
+string makeValidFileName(const string& input, bool strict) {
+  string out;
+  out.reserve(input.size());
+
+  if (strict) {
+    for (size_t k = 0; k < input.length(); k++) {
+      char b = input[k];
+      if ((b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || b == '.')
+        out.push_back(b);
+      else if (b == ' ' || b == ',')
+        out.push_back('_');
+      else {
+        b = toLowerStripped(b);
+
+        if (b >= 'a' && b <= 'z')
+          b = b;
+        else if (b == 'ö')
+          b = 'o';
+        else if (b == 'ä' || b == 'å' || b == 'à' || b == 'á' || b == 'â' || b == 'ã' || b == 'æ')
+          b = 'a';
+        else if (b == 'ç')
+          b = 'c';
+        else if (b == 'è' || b == 'é' || b == 'ê' || b == 'ë')
+          b = 'e';
+        else if (b == 'ð')
+          b = 't';
+        else if (b == 'ï' || b == 'ì' || b == 'ï' || b == 'î' || b == 'í')
+          b = 'i';
+        else if (b == 'ò' || b == 'ó' || b == 'ô' || b == 'õ' || b == 'ø')
+          b = 'o';
+        else if (b == 'ù' || b == 'ú' || b == 'û' || b == 'ü')
+          b = 'u';
+        else if (b == 'ý')
+          b = 'y';
+        else
+          b = '-';
+
+        out.push_back(b);
+      }
+    }
+  }
+  else {
+    for (size_t k = 0; k < input.length(); k++) {
+      char b = input[k];
+      if (b < 32 || b == '*' || b == '?' || b == ':' || b == '/' || b == '\\')
+        b = '_';
+      out.push_back(b);
+    }
+  }
+  return out;
+}
+
+
 void capitalize(wstring &str) {
   if (str.length() > 0) {
     auto bf = str.c_str();
@@ -2211,4 +2280,9 @@ void checkWriteAccess(const wstring &file) {
     throw meosException(wstring(L"Du saknar behörighet att skriva till 'X'.#") + absPath);
   }
   CloseHandle(h);
+}
+
+int compareStringIgnoreCase(const wstring &a, const wstring &b) {
+  return CompareString(LOCALE_USER_DEFAULT, NORM_IGNORECASE, a.c_str(), a.length(),
+                       b.c_str(), b.length()) - CSTR_EQUAL;
 }

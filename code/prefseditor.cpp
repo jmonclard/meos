@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -132,7 +132,7 @@ void PrefsEditor::handle(gdioutput &gdi, BaseInfo &data, GuiEventType type) {
     else if (bi.id.substr(0, 5) == "Save_") {
       string pref = bi.id.substr(5);
       wstring value;
-      if (gdi.hasField("ValueBoolean")) {
+      if (gdi.hasWidget("ValueBoolean")) {
         ListBoxInfo lbi;
         gdi.getSelectedItem("ValueBoolean", lbi);
         value = itow(lbi.data);
@@ -140,7 +140,7 @@ void PrefsEditor::handle(gdioutput &gdi, BaseInfo &data, GuiEventType type) {
       else
         value = gdi.getText("Value");
 
-      PropertyType type = (PropertyType)int(gdi.getData("EditPrefs"));
+      PropertyType type = (PropertyType)(gdi.getDataInt("EditPrefs"));
       oe->setProperty(pref.c_str(), value);
       dynamic_cast<TextInfo *>(gdi.setText("value" + pref, codeValue(value, type)))->
              setColor(selectColor(value, type));

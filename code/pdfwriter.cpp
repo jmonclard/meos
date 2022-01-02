@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -290,16 +290,18 @@ void pdfwriter::generatePDF(const gdioutput &gdi,
       string nt = gdi.toUTF8(info[k].ti.text);
         
       if (info[k].ti.format & textRight) {
-        float w = float(info[k].ti.xlimit) * scale*fontScale;
+        float w = float(info[k].ti.xlimit) * scale;
         float sw = HPDF_Page_TextWidth(page, nt.c_str());
-        float space = info[k].ti.xlimit > 0 ? 2 * HPDF_Page_GetCharSpace(page) : 0;
+        //float space = info[k].ti.xlimit > 0 ? 2 * HPDF_Page_GetCharSpace(page) : 0;
+        float space = info[k].ti.xlimit > 0 ? HPDF_Page_TextWidth(page, "-") : 0;
+
         HPDF_Page_TextOut (page, info[k].xp + w - sw - space, h - info[k].yp,
                             nt.c_str());
       }
       else if (info[k].ti.format & textCenter) {
-        float w = float(info[k].ti.xlimit) * scale*fontScale;
+        float w = float(info[k].ti.xlimit) * scale;
         float sw = HPDF_Page_TextWidth(page, nt.c_str());
-        HPDF_Page_TextOut (page, info[k].xp + w - sw/2, h - info[k].yp,
+        HPDF_Page_TextOut (page, info[k].xp + (w - sw) *0.5f, h - info[k].yp,
                             nt.c_str());
       }
       else {

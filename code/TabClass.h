@@ -1,7 +1,7 @@
 ﻿#pragma once
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -79,14 +79,15 @@ class TabClass :
   set<oEvent::DrawMethod> getSupportedDrawMethods(bool multiDay) const;
 
   void drawDialog(gdioutput &gdi, oEvent::DrawMethod method, const oClass &cls);
-
   void pursuitDialog(gdioutput &gdi);
+  void addVacantPosition(gdioutput &gdi);
+  oEvent::VacantPosition TabClass::readVacantPosition(gdioutput &gdi) const;
 
   bool warnDrawStartTime(gdioutput &gdi, int time, bool absTime);
   bool warnDrawStartTime(gdioutput &gdi, const wstring &firstStart);
 
   void static clearPage(gdioutput &gdi, bool autoRefresh);
-
+  void hideEditResultModule(gdioutput &gdi, int ix) const;
   bool hasWarnedStartTime;
   bool hasWarnedDirect;
   bool tableMode;
@@ -117,7 +118,7 @@ class TabClass :
   void showClassSelection(gdioutput &gdi, int &bx, int &by, GUICALLBACK classesCB) const;
 
   // Set simultaneous start in a class
-  void simultaneous(int classId, const wstring &time);
+  void simultaneous(int classId, const wstring &time, int nVacant);
 
   void updateFairForking(gdioutput &gdi, pClass pc) const;
   void selectCourses(gdioutput &gdi, int legNo);
@@ -149,7 +150,7 @@ class TabClass :
 
   static vector< pair<wstring, size_t> > getPairOptions();
 
-  void setLockForkingState(gdioutput &gdi, bool poolState, bool lockState);
+  void setLockForkingState(gdioutput &gdi, bool poolState, bool lockState, int nLegs);
   void setLockForkingState(gdioutput &gdi, const oClass &c);
 
   void loadBasicDrawSetup(gdioutput &gdi, int &bx, int &by, const wstring& firstStart, 
@@ -159,8 +160,16 @@ class TabClass :
 
   wstring getDefaultVacant();
   void setDefaultVacant(const wstring &val);
+
+  vector<string> currentResultModuleTags;
+  void fillResultModules(gdioutput &gdi, pClass pc);
+
+  shared_ptr<GuiHandler> startGroupHandler;
+
 public:
-  
+  void loadStartGroupSettings(gdioutput &gdi, bool reload);
+  void drawStartGroups(gdioutput &gdi);
+
   void clearCompetitionData();
 
   void closeWindow(gdioutput &gdi);

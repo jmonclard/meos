@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -75,6 +75,10 @@ enum gdiFonts;
 
 #define START_YP 30
 #define NOTIMEOUT 0x0AAAAAAA
+
+constexpr int baseButtonWidth = 150;
+
+constexpr int GDI_BUTTON_SPACING = 8;
 
 typedef list<ToolInfo> ToolList;
 /*
@@ -221,10 +225,10 @@ protected:
 
   void initCommon(double scale, const wstring &font);
 
-  void processButtonMessage(ButtonInfo &bi, DWORD wParam);
-  void processEditMessage(InputInfo &bi, DWORD wParam);
-  void processComboMessage(ListBoxInfo &bi, DWORD wParam);
-  void processListMessage(ListBoxInfo &bi, DWORD wParam);
+  void processButtonMessage(ButtonInfo &bi, WPARAM wParam);
+  void processEditMessage(InputInfo &bi, WPARAM wParam);
+  void processComboMessage(ListBoxInfo &bi, WPARAM wParam);
+  void processListMessage(ListBoxInfo &bi, WPARAM wParam);
 
   void doEnter();
   void doEscape();
@@ -285,6 +289,8 @@ protected:
   shared_ptr<AnimationData> animationData;
 
   shared_ptr<AutoCompleteInfo> autoCompleteInfo;
+
+  wstring delayedAlert;
 public:
 
   AutoCompleteInfo &addAutoComplete(const string &key);
@@ -371,7 +377,7 @@ public:
   bool hasToolbar() const;
   void activateToolbar(bool active);
 
-  void processToolbarMessage(const string &id, void *data);
+  void processToolbarMessage(const string &id, Table *data);
 
   void synchronizeListScroll(const string &id1, const string &id2);
 
@@ -424,7 +430,7 @@ public:
 
   void selectTab(int Id);
 
-  void addTable(Table *table, int x, int y);
+  void addTable(const shared_ptr<Table> &table, int x, int y);
   Table &getTable() const; //Get the (last) table. If needed, add support for named tables...
 
 
@@ -468,8 +474,8 @@ public:
   void setRestorePoint();
   void setRestorePoint(const string &id);
 
-  bool removeControl(const string &id);
-  bool hideControl(const string &id);
+  bool removeWidget(const string &id);
+  bool hideWidget(const string &id, bool hide = true);
 
   void CheckInterfaceTimeouts(DWORD T);
   bool RemoveFirstInfoBox(const string &id);
@@ -539,6 +545,8 @@ public:
   void setData(const string &id, const string &data);
 
   void *getData(const string &id) const;
+  int getDataInt(const string &id) const { return int(size_t(getData(id))); }
+
   bool getData(const string &id, string &out) const;
 
 
@@ -565,7 +573,11 @@ public:
 
   void alert(const string &msg) const;
   void alert(const wstring &msg) const;
-  
+  // Alert from main thread (via callback)
+  void delayAlert(const wstring& msg);
+  // Get and clear any delayed alert
+  wstring getDelayedAlert();
+
   void fillDown(){Direction=1;}
   void fillRight(){Direction=0;}
   void fillNone(){Direction=-1;}
@@ -597,10 +609,13 @@ public:
 
   bool clearList(const string &id);
 
-  bool hasField(const string &id) const;
+  bool hasWidget(const string &id) const;
   
   const wstring &getText(const char *id, bool acceptMissing = false) const;
   
+  BaseInfo &getBaseInfo(const string &id) const {
+    return getBaseInfo(id.c_str());
+  }
   BaseInfo &getBaseInfo(const char *id) const;
   BaseInfo &getBaseInfo(const wchar_t *id) const {
     return getBaseInfo(narrow(id).c_str());
@@ -684,6 +699,9 @@ public:
 
   bool isInputChanged(const string &exclude);
 
+  /** Get width of input widget with specified length (chars)*/
+  pair<int,int> getInputDimension(int length) const;
+
   InputInfo &addInput(const string &id, const wstring &text = L"", int length=16, GUICALLBACK cb=0,
                       const wstring &Explanation = L"", const wstring &tooltip=L"");
   InputInfo &addInput(int x, int y, const string &id, const wstring &text, int length, 
@@ -750,8 +768,9 @@ public:
 
   void closeWindow();
 
+  int popupMenu(int x, int y, const vector<pair<wstring, int>> &menuItems) const;
+
   void setDBErrorState(bool state);
-  friend int TablesCB(gdioutput *gdi, int type, void *data);
   friend class Table;
   friend gdioutput *createExtraWindow(const string &tag, const wstring &title, int max_x, int max_y, bool fixedSize);
 

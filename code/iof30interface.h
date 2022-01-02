@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,6 +24,7 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <tuple>
 
 class oEvent;
 class xmlobject;
@@ -48,6 +49,14 @@ typedef oClub * pClub;
 typedef oTeam * pTeam;
 typedef oCourse *pCourse;
 
+struct XMLService {
+  int id;
+  wstring name;
+
+  XMLService(int id, const wstring &name) : id(id), name(name) {}
+  XMLService() {}
+};
+
 class IOF30Interface {
   oEvent &oe;
 
@@ -66,6 +75,8 @@ class IOF30Interface {
   void operator=(const IOF30Interface &);
 
   set<wstring> matchedClasses;
+
+  list<XMLService> services;
 
   struct LegInfo {
     int maxRunners;
@@ -131,6 +142,8 @@ class IOF30Interface {
 
   vector<FeeStatistics> feeStatistics;
 
+  map<int, vector<tuple<int, int, pCourse>>> classToBibLegCourse;
+
   static void getAgeLevels(const vector<FeeInfo> &fees, const vector<int> &ix,
                            int &normalIx, int &redIx, wstring &youthLimit, wstring &seniorLimit);
 
@@ -163,11 +176,16 @@ class IOF30Interface {
                       map<int, pair<wstring, int> > &bibPatterns,
                       const map<int, vector<LegInfo> > &teamClassConfig);
 
-  pTeam getCreateTeam(gdioutput &gdi, const xmlobject &xTeam, bool &newTeam);
+
+  pRunner readPersonResult(gdioutput &gdi, pClass pc, xmlobject &xo, pTeam team,
+                          const map<int, vector<LegInfo> > &teamClassConfig);
+
+  pTeam getCreateTeam(gdioutput &gdi, const xmlobject &xTeam, int expectedClassId, bool &newTeam);
 
   static int getIndexFromLegPos(int leg, int legorder, const vector<LegInfo> &setup);
   
-  void prescanEntry(xmlobject & xo, set<int>& stages);
+  void prescanEntry(xmlobject & xo, set<int>& stages, xmlList &work);
+  void readIdProviders(xmlobject &person, xmlList &ids, std::string &type);
   void setupClassConfig(int classId, const xmlobject &xTeam, map<int, vector<LegInfo> > &teamClassConfig);
 
   void setupRelayClasses(const map<int, vector<LegInfo> > &teamClassConfig);
@@ -255,7 +273,7 @@ class IOF30Interface {
   void teamCourseAssignment(gdioutput &gdi, xmlList &xAssignment,
                             const map<wstring, pCourse> &courses);
 
-  void assignTeamCourse(gdioutput &gdi, oTeam &t, xmlList &xAssignment,
+  void assignTeamCourse(gdioutput &gdi, oTeam *t, int iClass, int iBib, xmlList &xAssignment,
                         const map<wstring, pCourse> &courses);
 
   pCourse findCourse(gdioutput &gdi, const map<wstring, pCourse> &courses,
@@ -269,6 +287,8 @@ class IOF30Interface {
                          const map<int, wstring> &ctrlId2ExportId);
 
   void readId(const xmlobject &person, int &pid, __int64 &extId) const;
+
+  set<int> readCrsIds;
 
 public:
   IOF30Interface(oEvent *oe, bool forceSplitFee);
@@ -294,10 +314,13 @@ public:
 
   void readStartList(gdioutput &gdi, xmlobject &xo, int &entRead, int &entFail);
 
+  void readResultList(gdioutput &gdi, xmlobject &xo, int &entRead, int &entFail);
+
   void readServiceRequestList(gdioutput &gdi, xmlobject &xo, int &entRead, int &entFail);
 
   void readClassList(gdioutput &gdi, xmlobject &xo, int &entRead, int &entFail);
 
+  void prescanCompetitorList(xmlobject &xo);
   void readCompetitorList(gdioutput &gdi, const xmlobject &xo, int &personCount);
 
   void readClubList(gdioutput &gdi, const xmlobject &xo, int &clubCount);

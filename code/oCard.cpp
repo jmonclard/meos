@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -68,9 +68,10 @@ bool oCard::Write(xmlparser &xml)
   xml.startTag("Card");
   xml.write("CardNo", cardNo);
   xml.write("Punches", getPunchString());
-  xml.write("ReadId", readId);
+  xml.write("ReadId", int(readId));
+  xml.write("Voltage", miliVolt);
   xml.write("Id", Id);
-  xml.write("Updated", Modified.getStamp());
+  xml.write("Updated", getStamp());
   xml.endTag();
 
   return true;
@@ -86,11 +87,14 @@ void oCard::Set(const xmlobject &xo)
     if (it->is("CardNo")){
       cardNo = it->getInt();
     }
+    if (it->is("Voltage")) {
+      miliVolt = it->getInt();
+    }
     else if (it->is("Punches")){
       importPunches(it->getRaw());
     }
     else if (it->is("ReadId")){
-      readId = it->getInt();
+      readId = it->getInt(); // COded as signed int
     }
     else if (it->is("Id")){
       Id = it->getInt();
@@ -99,6 +103,17 @@ void oCard::Set(const xmlobject &xo)
       Modified.setStamp(it->getRaw());
     }
   }
+}
+
+pair<int, int> oCard::getCardHash() const {
+  int a = cardNo;
+  int b = readId;
+
+  for (auto &p : punches) {
+    a = a * 31 + p.getTimeInt() * 997 + p.getTypeCode();
+    b = b * 41 + p.getTimeInt() * 97 + p.getTypeCode();
+  }
+  return make_pair(a, b);
 }
 
 void oCard::setCardNo(int c)
@@ -520,8 +535,9 @@ pCard oEvent::addCard(const oCard &oc)
     return 0;
 
   Cards.push_back(oc);
-  Cards.back().addToEvent();
-
+  Cards.back().tOwner = nullptr;
+  Cards.back().addToEvent(this, &oc);
+  qFreeCardId = max(oc.Id, qFreeCardId);
   return &Cards.back();
 }
 
@@ -555,27 +571,26 @@ bool oEvent::isCardRead(const SICard &card) const
   return false;
 }
 
+const shared_ptr<Table> &oCard::getTable(oEvent *oe) {
+  if (!oe->hasTable("cards")) {
+    auto table = make_shared<Table>(oe, 20, L"Brickor", "cards");
 
-Table *oEvent::getCardsTB() //Table mode
-{
-  oCardList::iterator it;
+    table->addColumn("Id", 70, true, true);
+    table->addColumn("Ändrad", 70, false);
 
-  Table *table=new Table(this, 20, L"Brickor", "cards");
+    table->addColumn("Bricka", 120, true);
+    table->addColumn("Deltagare", 200, false);
+    table->addColumn("Spänning", 70, false);
 
-  table->addColumn("Id", 70, true, true);
-  table->addColumn("Ändrad", 70, false);
+    table->addColumn("Starttid", 70, false);
+    table->addColumn("Måltid", 70, false);
+    table->addColumn("Stämplingar", 70, true);
 
-  table->addColumn("Bricka", 120, true);
-  table->addColumn("Deltagare", 200, false);
-
-  table->addColumn("Starttid", 70, false);
-  table->addColumn("Måltid", 70, false);
-  table->addColumn("Stämplingar", 70, true);
-
-  table->setTableProp(Table::CAN_DELETE);
-  table->update();
-
-  return table;
+    table->setTableProp(Table::CAN_DELETE);
+    oe->setTable("cards", table);
+  }
+  
+  return oe->getTable("cards");
 }
 
 void oEvent::generateCardTableData(Table &table, oCard *addCard)
@@ -611,6 +626,8 @@ void oCard::addTableRow(Table &table) const {
   table.set(row++, it, TID_CARD, getCardNoString(), true, cellAction);
 
   table.set(row++, it, TID_RUNNER, runner, true, cellAction);
+
+  table.set(row++, it, TID_VOLTAGE, getCardVoltage(), false, cellAction);
 
   oPunch *p=getPunchByType(oPunch::PunchStart);
   wstring time;
@@ -714,7 +731,9 @@ void oCard::setupFromRadioPunches(oRunner &r) {
 
 void oCard::changedObject() {
   if (tOwner)
-    tOwner->markClassChanged(-1);
+    tOwner->changedObject();
+
+  oe->sqlCards.changed = true;
 }
 
 int oCard::getNumControlPunches(int startPunchType, int finishPunchType) const {
@@ -767,3 +786,24 @@ void oCard::adaptTimes(int startTime) {
     updateChanged();
   }
 }
+
+wstring oCard::getCardVoltage() const {
+  if (miliVolt == 0)
+    return L"";
+  int vi = miliVolt / 1000;
+  int vd = (miliVolt % 1000)/10;
+
+  wchar_t bf[64];
+  swprintf_s(bf, L"%d.%02d V", vi, vd);
+  return bf;
+}
+
+oCard::BatteryStatus oCard::isCriticalCardVoltage() const {
+  if (miliVolt > 0 && miliVolt < 2445)
+    return BatteryStatus::Bad;
+  else if (miliVolt > 0 && miliVolt <= 2710)
+    return BatteryStatus::Warning;
+
+  return BatteryStatus::OK;
+}
+

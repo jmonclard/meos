@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -132,10 +132,11 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
       pClub pc=oe->getClub(lbi.data);
       if (pc) {
         gdi.clearPage(true);
-        oe->calculateTeamResults(false);
-        oe->sortTeams(ClassStartTime, 0, true);
         oe->calculateResults({}, oEvent::ResultType::ClassResult);
         oe->sortRunners(ClassStartTime);
+        oe->calculateTeamResults(set<int>({}), oEvent::ResultType::ClassResult);
+        oe->sortTeams(ClassStartTime, 0, true);
+
         int pay, paid;
         {
           map<int, int> ppm;
@@ -143,12 +144,12 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
           oClub::definedPayModes(*oe, dpm);
           pc->generateInvoice(gdi, pay, paid, dpm, ppm);
         }
-        gdi.addButton(gdi.getWidth()+20, 15, gdi.scaleLength(120),
+        gdi.addButton(gdi.getWidth()+20, gdi.scaleLength(15), gdi.scaleLength(baseButtonWidth),
                       "Cancel", "Återgå", ClubsCB, "", true, false);
-        gdi.addButton(gdi.getWidth()+20, 45,  gdi.scaleLength(120),
+        gdi.addButton(gdi.getWidth()+20, gdi.scaleLength(45),  gdi.scaleLength(baseButtonWidth),
                       "Print", "Skriv ut...", ClubsCB,
                       "Skriv ut fakturan", true, false);
-        gdi.addButton(gdi.getWidth()+20, 75,  gdi.scaleLength(120),
+        gdi.addButton(gdi.getWidth()+20, gdi.scaleLength(75),  gdi.scaleLength(baseButtonWidth),
                       "PDF", "PDF...", ClubsCB,
                       "Spara som PDF.", true, false);
         gdi.refresh();
@@ -189,14 +190,14 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
 
       oe->printInvoices(gdi, oEvent::InvoicePrintType(lbi.data), path, false);
 
-      gdi.addButton(gdi.getWidth()+20, 15, gdi.scaleLength(120),
+      gdi.addButton(gdi.getWidth()+20, 15, gdi.scaleLength(baseButtonWidth),
                     "Cancel", "Återgå", ClubsCB, "", true, false);
 
       if (lbi.data>10) { // To file
-        gdi.addButton(gdi.getWidth()+20, 45,  gdi.scaleLength(120),
+        gdi.addButton(gdi.getWidth()+20, 45,  gdi.scaleLength(baseButtonWidth),
                       "Print", "Skriv ut...", ClubsCB,
                       "", true, false);
-        gdi.addButton(gdi.getWidth()+20, 75,  gdi.scaleLength(120),
+        gdi.addButton(gdi.getWidth()+20, 75,  gdi.scaleLength(baseButtonWidth),
                       "PDF", "PDF...", ClubsCB,
                       "Spara som PDF.", true, false);
         gdi.refresh();
@@ -248,9 +249,9 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
       gdi.clearPage(false);
       wstring nn;
       oe->printInvoices(gdi, oEvent::IPTAllPrint, nn, true);
-      gdi.addButton(gdi.getWidth()+20, 15,  gdi.scaleLength(120), "Cancel",
+      gdi.addButton(gdi.getWidth()+20, 15,  gdi.scaleLength(baseButtonWidth), "Cancel",
                     "Återgå", ClubsCB, "", true, false);
-      gdi.addButton(gdi.getWidth()+20, 45,  gdi.scaleLength(120), "Print",
+      gdi.addButton(gdi.getWidth()+20, 45,  gdi.scaleLength(baseButtonWidth), "Print",
                     "Skriv ut...", ClubsCB, "Skriv ut fakturan", true, false);
 
       gdi.refresh();
@@ -298,16 +299,20 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
     }
     else if (bi.id == "InvoiceSettings") {
       gdi.clearPage(true);
+      gdi.pushX();
       gdi.addString("", boldLarge, "Fakturainställningar");
       gdi.dropLine();
       firstInvoice = oClub::getFirstInvoiceNumber(*oe);
       if (firstInvoice == 0)
         firstInvoice = oe->getPropertyInt("FirstInvoice", 1000);
 
-      gdi.addInput("FirstInvoice", itow(firstInvoice), 5, 0, L"Första fakturanummer:");
-
-      gdi.dropLine();
-      gdi.addString("", boldText, "Organisatör");
+      gdi.fillRight();
+      gdi.addInput("InvoiceDate", oClub::getInvoiceDate(*oe), 16, nullptr, L"Fakturadatum:");
+      gdi.addInput("FirstInvoice", itow(firstInvoice), 16, 0, L"Första fakturanummer:");
+      gdi.fillDown();
+      gdi.popX();
+      gdi.dropLine(4);
+      gdi.addString("", fontMediumPlus, "Organisatör");
 
       vector<string> fields;
       gdi.pushY();
@@ -319,7 +324,7 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
       oe->getDI().buildDataFields(gdi, fields, 32);
 
       gdi.dropLine();
-      gdi.addString("", boldText, "Betalningsinformation");
+      gdi.addString("", fontMediumPlus, "Betalningsinformation");
       fields.clear();
       fields.push_back("Account");
       fields.push_back("PaymentDue");
@@ -333,7 +338,7 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
       gdi.dropLine(2);
       gdi.popX();
 
-      gdi.addString("", boldText, "Formatering");
+      gdi.addString("", fontMediumPlus, "Formatering");
 
       gdi.fillRight();
       gdi.addString("", 0, "Koordinater (mm) för adressfält:");
@@ -352,12 +357,11 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
       gdi.dropLine(1);
 
       gdi.fillRight();
-      gdi.addButton("SaveSettings", "Spara", ClubsCB);
-      gdi.addButton("Cancel", "Avbryt", ClubsCB);
+      gdi.addButton("SaveSettings", "Spara", ClubsCB).setDefault();
+      gdi.addButton("Cancel", "Avbryt", ClubsCB).setCancel();
       gdi.dropLine(2);
       gdi.setOnClearCb(ClubsCB);
       oe->getDI().fillDataFields(gdi);
-
     }
     else if (bi.id == "SaveSettings") {
       oe->getDI().saveDataFields(gdi);
@@ -374,6 +378,13 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
       }
       else
         oe->setProperty("FirstInvoice", fn);
+
+      if (gdi.getText("InvoiceDate").empty()) {
+        gdi.setText("InvoiceDate", oClub::getInvoiceDate(*oe));
+        dynamic_cast<InputInfo &>(gdi.getBaseInfo("InvoiceDate")).setBgColor(colorLightRed);
+        return 0;
+      }
+      oClub::setInvoiceDate(*oe, gdi.getText("InvoiceDate"));
 
       int xc = gdi.getTextNo("XC");
       int yc = gdi.getTextNo("YC");
@@ -581,7 +592,7 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
   else if (type == GUI_LINK) {
     TextInfo *ti = static_cast<TextInfo*>(data);
     if (ti->id == "CmpSettings") {
-      if (gdi.hasField("SaveSettings"))
+      if (gdi.hasWidget("SaveSettings"))
         gdi.sendCtrlMessage("SaveSettings");
       TabCompetition &tc = dynamic_cast<TabCompetition &>(*gdi.getTabs().get(TCmpTab));
       tc.loadPage(gdi);
@@ -592,7 +603,7 @@ int TabClub::clubCB(gdioutput &gdi, int type, void *data)
   }
   else if (type == GUI_CLEAR) {
     if (gdi.isInputChanged("")) {
-      if (gdi.hasField("SaveSettings")) {
+      if (gdi.hasWidget("SaveSettings")) {
         gdi.sendCtrlMessage("SaveSettings");
       }
     }
@@ -664,8 +675,7 @@ bool TabClub::loadPage(gdioutput &gdi)
   gdi.dropLine(2);
   gdi.addString("", 10, "help:29758");
   gdi.dropLine(1);
-  Table *tbl=oe->getClubsTB();
-  gdi.addTable(tbl, gdi.getCX(), gdi.getCY());
+  gdi.addTable(oClub::getTable(oe), gdi.getCX(), gdi.getCY());
   gdi.refresh();
   return true;
 }
