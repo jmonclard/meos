@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -26,6 +26,8 @@
 
 #include <commctrl.h>
 #include <commdlg.h>
+#include <MMSystem.h>
+
 #include <algorithm>
 
 #include "oEvent.h"
@@ -67,8 +69,7 @@ TabSI::TabSI(oEvent *poe):TabBase(poe), activeSIC(ConvertedTimeStatus::Unknown) 
 
   lastClubId=0;
   lastClassId=0;
-  logger = 0;
-
+  
   minRunnerId = 0;
   inputId = 0;
   printErrorShown = false;
@@ -77,9 +78,6 @@ TabSI::TabSI(oEvent *poe):TabBase(poe), activeSIC(ConvertedTimeStatus::Unknown) 
 
 TabSI::~TabSI(void)
 {
-  if (logger!=0)
-    delete logger;
-  logger = 0;
 }
 
 
@@ -93,8 +91,8 @@ static void entryTips(gdioutput &gdi) {
 
 void TabSI::logCard(gdioutput &gdi, const SICard &card)
 {
-  if (logger == 0) {
-    logger = new csvparser;
+  if (!logger) {
+    logger = make_shared<csvparser>();
     wstring readlog = L"sireadlog_" + getLocalTimeFileName() + L".csv";
     wchar_t file[260];
     wstring subfolder = makeValidFileName(oe->getName(), true);
@@ -124,7 +122,97 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
   if (type == GUI_BUTTON) {
     ButtonInfo bi = *(ButtonInfo *)data;
 
-    if (bi.id == "ClearMemory") {
+    if (bi.id == "LockFunction") {
+      lockedFunction = true;
+      loadPage(gdi);
+    }
+    else if (bi.id == "UnlockFunction") {
+      lockedFunction = false;
+      loadPage(gdi);
+    }
+    else if (bi.id == "AllowStart")
+      allowStart = gdi.isChecked(bi.id);
+    else if (bi.id == "AllowControl") 
+      allowControl = gdi.isChecked(bi.id);
+    else if (bi.id == "AllowFinish") 
+      allowFinish = gdi.isChecked(bi.id);
+    else if (bi.id == "PlaySound") {
+      oe->setProperty("PlaySound", gdi.isChecked(bi.id) ? 1 : 0);
+    }
+    else if (bi.id == "SoundChoice") {
+      gdi.disableInput("SoundChoice");
+      gdi.setRestorePoint("Sound");
+      gdi.dropLine();
+      gdi.fillDown();
+      gdi.addString("", fontMediumPlus, "help:selectsound");
+      gdi.dropLine(0.5);
+      gdi.pushX();
+      gdi.fillRight();
+
+      auto addSoundWidget = [&gdi, this](const wchar_t *name, SND type, const wstring &label) {
+        string nname = gdioutput::narrow(name);
+        gdi.addInput(nname, oe->getPropertyString(nname.c_str(), L""), 32, nullptr, label);
+        gdi.dropLine(0.8);
+        gdi.addButton("BrowseSound", "Bläddra...", SportIdentCB).setExtra(name);
+        gdi.addButton("TestSound", "Testa", SportIdentCB).setExtra(int(type));
+        gdi.dropLine(3);
+        gdi.popX();
+      };
+
+      addSoundWidget(L"SoundOK", SND::OK, L"Status OK:");
+      addSoundWidget(L"SoundNotOK", SND::NotOK, L"Status inte OK (röd utgång):");
+      addSoundWidget(L"SoundLeader", SND::Leader, L"Ny ledare i klassen:");
+      addSoundWidget(L"SoundAction", SND::ActionNeeded, L"Åtgärd krävs:");
+
+      gdi.addButton("CloseSound", "OK", SportIdentCB);
+      gdi.popX();
+      gdi.dropLine(3);
+      gdi.scrollToBottom();
+      gdi.refresh();
+        /*
+            fn = oe->getPropertyString("SoundOK", L"");
+    res = 50;
+    break;
+  case SND::NotOK:
+    fn = oe->getPropertyString("SoundNotOK", L"");
+    res = 52;
+    break;
+  case SND::Leader:
+    fn = oe->getPropertyString("SoundLeader", L"");
+    res = 51;
+    break;
+  case SND::ActionNeeded:
+    fn = oe->getPropertyString("SoundAction", L"");
+
+        
+        */
+    }
+    else if (bi.id == "BrowseSound") {
+      vector< pair<wstring, wstring> > ext;
+      ext.push_back(make_pair(L"Ljud (wav)", L"*.wav"));
+
+      wstring file = gdi.browseForOpen(ext, L"wav");
+      if (!file.empty()) {
+        wchar_t *type = bi.getExtra();
+        string name = gdioutput::narrow(type);
+        gdi.setText(name, file);
+        oe->setProperty(name.c_str(), file);
+      }
+    }
+    else if (bi.id == "SoundOK" || bi.id == "SoundNotOK" ||
+             bi.id == "SoundLeader" || bi.id == "SoundAction") {
+      oe->setProperty(bi.id.c_str(), bi.text);
+    }
+    else if (bi.id == "TestSound") {
+      oe->setProperty("PlaySound", 1);
+      gdi.check(bi.id, true);
+      playReadoutSound(SND(bi.getExtraInt()));
+    }
+    else if (bi.id == "CloseSound") {
+      gdi.restore("Sound", true);
+      gdi.enableInput("SoundChoice");
+    }
+    else if (bi.id == "ClearMemory") {
       if (gdi.ask(L"Do you want to clear the card memory?")) {
         savedCards.clear();
         loadPage(gdi);
@@ -181,7 +269,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
       ListBoxInfo lbi;
       if (gdi.getSelectedItem("ComPort", lbi)) {
 
-        swprintf_s(bf, 64, L"COM%d", lbi.data);
+        swprintf_s(bf, 64, L"COM%d", lbi.getDataInt());
         wstring port = bf;
 
         if (lbi.text.substr(0, 3) == L"TCP")
@@ -296,7 +384,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
         if (lbi.text.substr(0, 3) == L"TCP")
           swprintf_s(bf, 64, L"TCP");
         else
-          swprintf_s(bf, 64, L"COM%d", lbi.data);
+          swprintf_s(bf, 64, L"COM%d", lbi.getDataInt());
         gdi.fillDown();
         gdi.addStringUT(0, lang.tl(L"Hämtar information om ") + wstring(bf) + L".");
         printSIInfo(gdi, bf);
@@ -675,7 +763,9 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
         int year = 0;
         pRunner r = gEvent->addRunner(gdi.getText("Runners"), club,
                                       classes[0]->getId(), activeSIC.CardNumber, year, true);
-
+        if (oe->isHiredCard(activeSIC.CardNumber)) {
+          r->getDI().setInt("CardFee", oe->getBaseCardFee());
+        }
         gdi.setData("RunnerId", r->getId());
 
         gdi.restore();
@@ -742,6 +832,10 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
       int year = 0;
       pRunner r = gEvent->addRunner(gdi.getText("Runners"), club,
                                     lbi.data, activeSIC.CardNumber, year, true);
+      
+      if (activeSIC.CardNumber > 0 && oe->isHiredCard(activeSIC.CardNumber)) {
+        r->getDI().setInt("CardFee", oe->getBaseCardFee());
+      }
 
       r->setStartTimeS(gdi.getText("StartTime"));
       r->setCardNo(activeSIC.CardNumber, false);
@@ -777,7 +871,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
           oe->getClass(1)->getNumRunners(false, false, false) == 0) {
         pclass = oe->getClass(1);
         pclass->setType(L"");
-        pclass->setName(gdi.getText("ClassName"));
+        pclass->setName(gdi.getText("ClassName"), true);
         pc = pclass->getCourse();
         if (pc)
           pc->setName(gdi.getText("ClassName"));
@@ -798,6 +892,9 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
       pRunner r = gEvent->addRunner(gdi.getText("Runners"), gdi.getText("Club", true),
                                     pclass->getId(), activeSIC.CardNumber, year, true);
 
+      if (activeSIC.CardNumber > 0 && oe->isHiredCard(activeSIC.CardNumber)) {
+        r->getDI().setInt("CardFee", oe->getBaseCardFee());
+      }
       r->setStartTimeS(gdi.getText("StartTime"));
       r->setCardNo(activeSIC.CardNumber, false);
       gdi.restore();
@@ -925,7 +1022,12 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
 
       di.setString("Phone", gdi.getText("Phone"));
 
-      r->setFlag(oRunner::FlagTransferSpecified, gdi.hasField("AllStages"));
+      if (gdi.isChecked("NoTiming"))
+        r->setStatus(RunnerStatus::StatusNoTiming, true, oBase::ChangeType::Update, false);
+      else if (r->getStatus() == RunnerStatus::StatusNoTiming)
+        r->setStatus(RunnerStatus::StatusUnknown, true, oBase::ChangeType::Update, false);
+
+      r->setFlag(oRunner::FlagTransferSpecified, gdi.hasWidget("AllStages"));
       r->setFlag(oRunner::FlagTransferNew, gdi.isChecked("AllStages"));
 
       r->setStartTimeS(gdi.getText("StartTime"));
@@ -943,7 +1045,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
         }
       }
       else {
-        r->setBib(bibIn, 0, false, false);
+        r->setBib(bibIn, 0, false);
         bib = L", " + lang.tl(L"Nummerlapp: ") + r->getBib();
       }
       r->synchronize();
@@ -1178,7 +1280,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
       pRunner r = gEvent->getRunner(bi.data, 0);
       if (r) {
         gdi.setData("RunnerId", bi.data);
-        if (gdi.hasField("Club"))
+        if (gdi.hasWidget("Club"))
           gdi.setText("Club", r->getClub());
         gdi.setText("FindMatch", lang.tl("Press Enter to continue"), true);
       }
@@ -1190,7 +1292,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
       wchar_t bf[64];
 
       if (bi.text.substr(0,3)!=L"TCP")
-        swprintf_s(bf, 64, L"COM%d", bi.data);
+        swprintf_s(bf, 64, L"COM%d", bi.getDataInt());
       else
         wcscpy_s(bf, L"TCP");
 
@@ -1203,7 +1305,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
       gdi.restore("SIPageLoaded");
       mode = SIMode(bi.data);
       gdi.setInputStatus("StartInfo", mode == ModeEntry);
-    
+ 
       if (mode==ModeAssignCards || mode==ModeEntry) {
         if (mode==ModeAssignCards) {
           gdi.dropLine(1);
@@ -1231,6 +1333,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
           showManualInput(gdi);
       }
       else if (mode == ModeCardData) {
+        numSavedCardsOnCmpOpen = savedCards.size();
         showModeCardData(gdi);
       }
       else if (mode == ModeCheckCards) {
@@ -1239,6 +1342,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
       else if (mode == ModeRegisterCards) {
         showRegisterHiredCards(gdi);
       }
+      updateReadoutFunction(gdi);
       gdi.refresh();
     }
     else if (bi.id=="Fee") {
@@ -1282,7 +1386,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
         if (!db_r && lastClubId)
           db_r = oe->dbLookUpByName(bi.text, lastClubId, 0, 0);
 
-        if (db_r && gdi.hasField("Club")) {
+        if (db_r && gdi.hasWidget("Club")) {
           gdi.setText("Club", db_r->getClub());
         }
       }
@@ -1325,7 +1429,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
         gdi.setInputFocus("OK1");
         gdi.setText("Runners", r->getName());
         gdi.setData("RunnerId", runnerMatchedId);
-        if (gdi.hasField("Club"))
+        if (gdi.hasWidget("Club"))
           gdi.setText("Club", r->getClub());
         inputId = -1;
         gdi.setText("FindMatch", lang.tl("Press Enter to continue"), true);
@@ -1530,7 +1634,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
       storedInfo.clear();
       storedInfo.storedName = gdi.getText("Name");
       storedInfo.storedCardNo = gdi.getText("CardNo");
-      storedInfo.storedClub = gdi.hasField("Club") ? gdi.getText("Club") : L"";
+      storedInfo.storedClub = gdi.hasWidget("Club") ? gdi.getText("Club") : L"";
       storedInfo.storedFee = gdi.getText("Fee", true);
 
       ListBoxInfo lbi;
@@ -1542,7 +1646,7 @@ int TabSI::siCB(gdioutput &gdi, int type, void *data)
       storedInfo.allStages = gdi.isChecked("AllStages");
       storedInfo.rentState = gdi.isChecked("RentCard");
       storedInfo.hasPaid = gdi.isChecked("Paid");
-      storedInfo.payMode = gdi.hasField("PayMode") ? gdi.getSelectedItem("PayMode").first : 0;
+      storedInfo.payMode = gdi.hasWidget("PayMode") ? gdi.getSelectedItem("PayMode").first : 0;
     }
     return 1;
   }
@@ -1605,7 +1709,7 @@ void TabSI::showReadPunches(gdioutput &gdi, vector<PunchInfo> &punches, set<stri
   int xp = gdi.getCX();
   dates.clear();
   for (size_t k=0;k<punches.size(); k++) {
-    sprintf_s(bf, "%d.", k+1);
+    sprintf_s(bf, "%d.", int(k+1));
     gdi.addStringUT(yp, xp, 0, bf);
 
     pRunner r = oe->getRunnerByCardNo(punches[k].card, punches[k].time, oEvent::CardLookupProperty::Any);
@@ -1634,7 +1738,7 @@ void TabSI::showReadCards(gdioutput &gdi, vector<SICard> &cards)
   int yp = gdi.getCY();
   int xp = gdi.getCX();
   for (size_t k=0;k<cards.size(); k++) {
-    sprintf_s(bf, "%d.", k+1);
+    sprintf_s(bf, "%d.", int(k+1));
     gdi.addStringUT(yp, xp, 0, bf);
 
     pRunner r = oe->getRunnerByCardNo(cards[k].CardNumber, 0, oEvent::CardLookupProperty::Any);
@@ -1652,7 +1756,7 @@ void TabSI::showReadCards(gdioutput &gdi, vector<SICard> &cards)
 SportIdent &TabSI::getSI(const gdioutput &gdi) {
   if (!gSI) {
     HWND hWnd=gdi.getHWNDMain();
-    gSI = new SportIdent(hWnd, 0);
+    gSI = new SportIdent(hWnd, 0, true);
   }
   return *gSI;
 }
@@ -1748,18 +1852,46 @@ bool TabSI::loadPage(gdioutput &gdi) {
   if (!oe->empty()) {
     gdi.setCX(xb + gdi.scaleLength(10));
     gdi.setCY(yb + gdi.scaleLength(10));
-    gdi.addString("", fontMediumPlus, "Funktion:");
-    gdi.addSelection("ReadType", 200, 200, SportIdentCB);
-    gdi.addItem("ReadType", lang.tl("Avläsning/radiotider"), ModeReadOut);
-    gdi.addItem("ReadType", lang.tl("Tilldela hyrbrickor"), ModeAssignCards);
-    gdi.addItem("ReadType", lang.tl("Avstämning hyrbrickor"), ModeCheckCards);
-    gdi.addItem("ReadType", lang.tl("Registrera hyrbrickor"), ModeRegisterCards);
-    gdi.addItem("ReadType", lang.tl("Anmälningsläge"), ModeEntry);
-    gdi.addItem("ReadType", lang.tl("Print card data"), ModeCardData);
+    
+    if (!lockedFunction) {
+      gdi.addString("", fontMediumPlus, "Funktion:");
+      gdi.addSelection("ReadType", 200, 200, SportIdentCB);
+      gdi.addItem("ReadType", lang.tl("Avläsning/radiotider"), ModeReadOut);
+      gdi.addItem("ReadType", lang.tl("Tilldela hyrbrickor"), ModeAssignCards);
+      gdi.addItem("ReadType", lang.tl("Avstämning hyrbrickor"), ModeCheckCards);
+      gdi.addItem("ReadType", lang.tl("Registrera hyrbrickor"), ModeRegisterCards);
+      gdi.addItem("ReadType", lang.tl("Anmälningsläge"), ModeEntry);
+      gdi.addItem("ReadType", lang.tl("Print card data"), ModeCardData);
+      gdi.selectItemByData("ReadType", mode);
 
-    gdi.selectItemByData("ReadType", mode);
-    gdi.dropLine(2.5);
-    gdi.setCX(xb + gdi.scaleLength(10));
+      gdi.dropLine(-0.1);
+      gdi.addButton("LockFunction", "Lås funktion", SportIdentCB);
+      readoutFunctionX = gdi.getCX();
+      readoutFunctionY = gdi.getCY();
+      gdi.dropLine(0.3);
+
+      gdi.addCheckbox("PlaySound", "Ljud", SportIdentCB, oe->getPropertyInt("PlaySound", 1) != 0, 
+                          "Spela upp ett ljud för att indikera resultatet av brickavläsningen.");
+      gdi.dropLine(-0.3);
+
+      gdi.addButton("SoundChoice", "Ljudval...", SportIdentCB);
+
+      gdi.dropLine(0.3);
+
+      gdi.addString("Allow", 0, "Tillåt:");
+      gdi.addCheckbox("AllowStart", "Start", SportIdentCB, allowStart);
+      gdi.addCheckbox("AllowControl", "Radio", SportIdentCB, allowControl);
+      gdi.addCheckbox("AllowFinish", "Mål", SportIdentCB, allowFinish);
+
+      updateReadoutFunction(gdi);
+
+      gdi.dropLine(2.5);
+      gdi.setCX(xb + gdi.scaleLength(10));
+    }
+    else {
+      gdi.addButton("UnlockFunction", "Lås upp", SportIdentCB);
+      gdi.dropLine(0.2);
+    }
   }
   else {
     mode = ModeCardData;
@@ -1831,6 +1963,16 @@ bool TabSI::loadPage(gdioutput &gdi) {
   return true;
 }
 
+void TabSI::updateReadoutFunction(gdioutput &gdi) {
+  bool hide = mode != SIMode::ModeReadOut;
+  gdi.hideWidget("Allow", hide);
+  gdi.hideWidget("AllowStart", hide);
+  gdi.hideWidget("AllowControl", hide);
+  gdi.hideWidget("AllowFinish", hide);
+  gdi.hideWidget("SoundChoice", hide);
+  gdi.hideWidget("PlaySound", hide);
+}
+
 void InsertSICard(gdioutput &gdi, SICard &sic)
 {
   TabSI &tsi = dynamic_cast<TabSI &>(*gdi.getTabs().get(TSITab));
@@ -1856,6 +1998,10 @@ pRunner TabSI::autoMatch(const SICard &sic, pRunner db_r)
       if (classes.size()==1 && dist>=-1 && dist<=1) { //Almost perfect match found. Assume it is it!
         r = gEvent->addRunnerFromDB(db_r, classes[0]->getId(), true);
         r->setCardNo(sic.CardNumber, false);
+
+        if (oe->isHiredCard(sic.CardNumber)) {
+          r->getDI().setInt("CardFee", oe->getBaseCardFee());
+        }
       }
       else r=0; //Do not assume too much...
     }
@@ -1968,6 +2114,11 @@ void TabSI::insertSICardAux(gdioutput &gdi, SICard &sic)
       else
         sic.analyseHour12Time(zt2);
     }
+
+    // Write read card to log
+    logCard(gdi, sic);
+
+    bool first = savedCards.size() == numSavedCardsOnCmpOpen;
     savedCards.push_back(make_pair(savedCardUniqueId++, sic));
     
     if (printSplits) {
@@ -1980,13 +2131,18 @@ void TabSI::insertSICardAux(gdioutput &gdi, SICard &sic)
 
     if (pageLoaded) {
       gdi.enableInput("CreateCompetition", true);
-      printCard(gdi, savedCards.back().first, false);
+      printCard(gdi, savedCards.back().first, nullptr, false);
       gdi.dropLine();
       gdi.refreshFast();
       gdi.scrollToBottom();
     }
+
+    if (first && !oe->empty())
+      gdi.alert(L"warn:printmodeonly");
+
     return;
   }
+
   gEvent->synchronizeList({ oListId::oLCardId, oListId::oLRunnerId });
 
   if (sic.punchOnly) {
@@ -2025,6 +2181,7 @@ void TabSI::insertSICardAux(gdioutput &gdi, SICard &sic)
       else {
         CardQueue.push_back(sic);
         gdi.addInfoBox("SIREAD", L"info:readout_action#" + gEvent->getCurrentTimeS()+L"#"+itow(sic.CardNumber), 0, SportIdentCB);
+        playReadoutSound(SND::ActionNeeded);
         return;
       }
     }
@@ -2032,8 +2189,10 @@ void TabSI::insertSICardAux(gdioutput &gdi, SICard &sic)
       if (!readBefore) {
         if (r && r->getClassId(false) && !sameCardNewRace)
           processCard(gdi, r, sic, true);
-        else
+        else {
           processUnmatched(gdi, sic, true);
+          playReadoutSound(SND::ActionNeeded);
+        }
       }
       else
         gdi.addInfoBox("SIREAD", L"Brickan redan inläst.", 0, SportIdentCB);
@@ -2059,6 +2218,7 @@ void TabSI::insertSICardAux(gdioutput &gdi, SICard &sic)
     name = itow(sic.CardNumber) + name;
     CardQueue.push_back(sic);
     gdi.addInfoBox("SIREAD", L"info:readout_queue#" + gEvent->getCurrentTimeS() + L"#" + name);
+    playReadoutSound(SND::ActionNeeded);
     return;
   }
 
@@ -2099,6 +2259,7 @@ void TabSI::insertSICardAux(gdioutput &gdi, SICard &sic)
       gdi.scrollToBottom();
       gdi.refresh();
       activeSIC.clear(0);
+      playReadoutSound(SND::ActionNeeded);
       checkMoreCardsInQueue(gdi);
       return;
     }
@@ -2209,7 +2370,7 @@ void TabSI::startInteractive(gdioutput &gdi, const SICard &sic, pRunner r, pRunn
       if (db_r)
         gdi.setText("Club", db_r->getClub()); //Data from DB
     }
-    if (gdi.getText("Runners").empty() || !gdi.hasField("Club"))
+    if (gdi.getText("Runners").empty() || !gdi.hasWidget("Club"))
       gdi.setInputFocus("Runners");
     else
       gdi.setInputFocus("Club");
@@ -2276,6 +2437,7 @@ void TabSI::processInsertCard(const SICard &sic)
   pCard card = oe->allocateCard(runner);
   card->setReadId(sic);
   card->setCardNo(sic.CardNumber);
+  card->setMeasuredVoltage(sic.miliVolt);
 
   if (sic.CheckPunch.Code!=-1)
     card->addPunch(oPunch::PunchCheck, sic.CheckPunch.Time, 0);
@@ -2305,7 +2467,7 @@ bool TabSI::processUnmatched(gdioutput &gdi, const SICard &csic, bool silent)
 
   card->setReadId(csic);
   card->setCardNo(csic.CardNumber);
-
+  card->setMeasuredVoltage(csic.miliVolt);
   
   wstring info=lang.tl(L"Okänd bricka ") + itow(sic.CardNumber) + L".";
   wstring warnings;
@@ -2354,7 +2516,7 @@ bool TabSI::processUnmatched(gdioutput &gdi, const SICard &csic, bool silent)
     gdi.addInfoBox("SIINFO", L"#" + info, 10000);
   }
   gdi.makeEvent("DataUpdate", "sireadout", 0, 0, true);
-
+  playReadoutSound(SND::ActionNeeded);
   checkMoreCardsInQueue(gdi);
   return true;
 }
@@ -2389,6 +2551,7 @@ bool TabSI::processCard(gdioutput &gdi, pRunner runner, const SICard &csic, bool
 
   // Choose course from pool
   pClass cls = runner->getClassRef(false);
+  pClass pclass = runner->getClassRef(true);
   if (cls && cls->hasCoursePool()) {
     unsigned leg=runner->legToRun();
 
@@ -2397,6 +2560,11 @@ bool TabSI::processCard(gdioutput &gdi, pRunner runner, const SICard &csic, bool
       if (c)
         runner->setCourseId(c->getId());
     }
+  }
+  else if (pclass && pclass != cls && pclass->hasCoursePool()) {
+    pCourse c = pclass->selectCourseFromPool(0, csic);
+    if (c)
+      runner->setCourseId(c->getId());
   }
 
   if (cls && cls->hasUnorderedLegs()) {
@@ -2407,7 +2575,6 @@ bool TabSI::processCard(gdioutput &gdi, pRunner runner, const SICard &csic, bool
     }
   }
 
-  pClass pclass = runner->getClassRef(true);
   if (!runner->getCourse(false) && !csic.isManualInput() && !oe->getMeOSFeatures().hasFeature(MeOSFeatures::NoCourses)) {
 
     if (pclass && !pclass->hasMultiCourse() && !pclass->hasDirectResult()) {
@@ -2444,7 +2611,7 @@ bool TabSI::processCard(gdioutput &gdi, pRunner runner, const SICard &csic, bool
   if (pcourse)
     pcourse->synchronize();
   else if (pclass && pclass->hasDirectResult())
-    runner->setStatus(StatusOK, true, false, false);
+    runner->setStatus(StatusOK, true, oBase::ChangeType::Update, false);
   //silent=true;
   SICard sic(csic);
   wstring info, warnings, cardno;
@@ -2455,6 +2622,7 @@ bool TabSI::processCard(gdioutput &gdi, pRunner runner, const SICard &csic, bool
 
     card->setReadId(csic);
     card->setCardNo(sic.CardNumber);
+    card->setMeasuredVoltage(sic.miliVolt);
 
     cardno = itow(sic.CardNumber);
 
@@ -2502,20 +2670,21 @@ bool TabSI::processCard(gdioutput &gdi, pRunner runner, const SICard &csic, bool
     runner->setCard(0);
 
     if (csic.statusOK) {
-      runner->setStatus(StatusOK, true, false);
+      runner->setStatus(StatusOK, true, oBase::ChangeType::Update);
       runner->setFinishTime(csic.relativeFinishTime);
     }
     else if (csic.statusDNF) {
-      runner->setStatus(StatusDNF, true, false);
+      runner->setStatus(StatusDNF, true, oBase::ChangeType::Update);
       runner->setFinishTime(0);
     }
     else {
-      runner->setStatus(StatusMP, true, false);
+      runner->setStatus(StatusMP, true, oBase::ChangeType::Update);
       runner->setFinishTime(csic.relativeFinishTime);
     }
 
     cardno = makeDash(L"-");
-    runner->evaluateCard(true, MP, false, false);
+    runner->evaluateCard(true, MP, 0, oBase::ChangeType::Update);
+    runner->synchronizeAll(true);
     runner->hasManuallyUpdatedTimeStatus();
   }
 
@@ -2531,17 +2700,23 @@ bool TabSI::processCard(gdioutput &gdi, pRunner runner, const SICard &csic, bool
   if (!warnings.empty())
     rc.bottom+=gdi.getLineHeight();
 
-  if (runner->getStatus()==StatusOK) {
-    set<int> clsSet;
-    if (runner->getClassId(false))
-      clsSet.insert(runner->getClassId(true));
-    gEvent->calculateResults(clsSet, oEvent::ResultType::ClassResult);
-    if (runner->getTeam())
-      gEvent->calculateTeamResults(runner->getLegNumber(), false);
+  set<int> clsSet;
+  if (runner->getClassId(false))
+    clsSet.insert(runner->getClassId(true));
+  gEvent->calculateResults(clsSet, oEvent::ResultType::ClassResult);
+  if (runner->getTeam())
+    gEvent->calculateTeamResults(clsSet, oEvent::ResultType::ClassResult);
+
+  if (runner->getStatusComputed()==StatusOK || isPossibleResultStatus(runner->getStatusComputed())) {
     bool qfClass = runner->getClassId(false) != runner->getClassId(true);
     wstring placeS = (runner->getTeam() && !qfClass) ? 
                    runner->getTeam()->getLegPlaceS(runner->getLegNumber(), false) :
                    runner->getPlaceS();
+
+    if (placeS == L"1") 
+      playReadoutSound(SND::Leader);
+    else
+      playReadoutSound(SND::OK);
 
     if (!silent) {
       gdi.fillDown();
@@ -2553,27 +2728,29 @@ bool TabSI::processCard(gdioutput &gdi, pRunner runner, const SICard &csic, bool
         gdi.addStringUT(rc.top+6+2*lh, rc.left+20, 0, warnings);
 
       wstring statusline = lang.tl(L"Status OK,    ") +
-                           lang.tl(L"Tid: ") + runner->getRunningTimeS() +
-                           lang.tl(L",      Prel. placering: ") + placeS;
-
+        lang.tl(L"Tid: ") + runner->getRunningTimeS(true); 
+      if (!placeS.empty())
+        statusline += lang.tl(L",      Prel. placering: ") + placeS;
 
       statusline += lang.tl(L",     Prel. bomtid: ") + runner->getMissedTimeS();
       gdi.addStringUT(rc.top+6+lh, rc.left+20, 0, statusline);
 
-      if (runner->isHiredCard())
+      if (runner->isHiredCard() || oe->isHiredCard(sic.CardNumber))
         rentCardInfo(gdi, rc.right-rc.left);
       gdi.scrollToBottom();
     }
     else {
       wstring msg = L"#" + runner->getName()  + L" (" + cardno + L")\n"+
           runner->getClub() + L". " + runner->getClass(true) +
-          L"\n" + lang.tl("Tid:  ") + runner->getRunningTimeS() + lang.tl(L", Plats  ") + placeS;
+          L"\n" + lang.tl("Tid:  ") + runner->getRunningTimeS(true) + lang.tl(L", Plats  ") + placeS;
 
       gdi.addInfoBox("SIINFO", msg, 10000);
     }
   }
   else {
-    wstring msg=lang.tl(L"Status: ") + runner->getStatusS(true);
+    wstring msg=lang.tl(L"Status: ") + runner->getStatusS(true, true);
+
+    playReadoutSound(SND::NotOK);
 
     if (!MP.empty()) {
       msg=msg + L", (";
@@ -2625,20 +2802,32 @@ bool TabSI::processCard(gdioutput &gdi, pRunner runner, const SICard &csic, bool
 
 void TabSI::processPunchOnly(gdioutput &gdi, const SICard &csic)
 {
-  SICard sic=csic;
+  SICard sic = csic;
   DWORD loaded;
   gEvent->convertTimes(nullptr, sic);
-  oFreePunch *ofp=0;
-
-  if (sic.nPunch==1)
-    ofp=gEvent->addFreePunch(sic.Punch[0].Time, sic.Punch[0].Code, sic.CardNumber, true);
-  else if (sic.FinishPunch.Time > 0)
-    ofp=gEvent->addFreePunch(sic.FinishPunch.Time, oPunch::PunchFinish, sic.CardNumber, true);
-  else if (sic.StartPunch.Time > 0)
-    ofp=gEvent->addFreePunch(sic.StartPunch.Time, oPunch::PunchStart, sic.CardNumber, true);
-  else
-    ofp=gEvent->addFreePunch(sic.CheckPunch.Time, oPunch::PunchCheck, sic.CardNumber, true);
-
+  oFreePunch *ofp = 0;
+  wstring accessError;
+  if (sic.nPunch == 1) {
+    if (allowControl)
+      ofp = gEvent->addFreePunch(sic.Punch[0].Time, sic.Punch[0].Code, sic.CardNumber, true);
+    else
+      accessError = L"Radio tillåts inte (X)#" + itow(sic.CardNumber);
+  }
+  else if (sic.FinishPunch.Time > 0) {
+    if (allowFinish)
+      ofp = gEvent->addFreePunch(sic.FinishPunch.Time, oPunch::PunchFinish, sic.CardNumber, true);
+    else
+      accessError = L"Målstämpling tillåts inte (X)#" + itow(sic.CardNumber);
+  }
+  else if (sic.StartPunch.Time > 0) {
+    if (allowStart)
+      ofp = gEvent->addFreePunch(sic.StartPunch.Time, oPunch::PunchStart, sic.CardNumber, true);
+    else
+      accessError = L"Startstämpling tillåts inte (X)#" + itow(sic.CardNumber);
+  }
+  else {
+    ofp = gEvent->addFreePunch(sic.CheckPunch.Time, oPunch::PunchCheck, sic.CardNumber, true);
+  }
   if (ofp) {
     pRunner r = ofp->getTiedRunner();
     if (gdi.getData("SIPageLoaded", loaded)){
@@ -2650,7 +2839,7 @@ void TabSI::processPunchOnly(gdioutput &gdi, const SICard &csic)
         gdi.dropLine();
       }
       else {
-        wstring str=L"SI " + itow(sic.CardNumber) + lang.tl(" (okänd) stämplade vid ") + ofp->getSimpleString();
+        wstring str= itow(sic.CardNumber) + lang.tl(" (okänd) stämplade vid ") + ofp->getSimpleString();
         gdi.addStringUT(0, str);
         gdi.dropLine(0.3);
       }
@@ -2659,13 +2848,20 @@ void TabSI::processPunchOnly(gdioutput &gdi, const SICard &csic)
 
     tabForceSync(gdi, gEvent);
     gdi.makeEvent("DataUpdate", "sireadout", r ? r->getId() : 0, 0, true);
-
+  }
+  else if (!accessError.empty()) {
+    if (gdi.getData("SIPageLoaded", loaded)) {
+      gdi.addString("", 0, accessError).setColor(colorDarkRed);
+      gdi.dropLine(0.3);
+      gdi.scrollToBottom();
+    }
+    else
+      gdi.addInfoBox("Access", accessError);
   }
 
   checkMoreCardsInQueue(gdi);
   return;
 }
-
 
 void TabSI::entryCard(gdioutput &gdi, const SICard &sic)
 {
@@ -2692,10 +2888,10 @@ void TabSI::entryCard(gdioutput &gdi, const SICard &sic)
     name=wstring(sic.lastName) + L", " + wstring(sic.firstName);
 
   gdi.setText("Name", name);
-  if (gdi.hasField("Club") && !club.empty())
+  if (gdi.hasWidget("Club") && !club.empty())
     gdi.setText("Club", club);
 
-  if (club.empty() && gdi.hasField("Club"))
+  if (club.empty() && gdi.hasWidget("Club"))
     gdi.setInputFocus("Club");
   else if (name.empty())
     gdi.setInputFocus("Name");
@@ -2855,35 +3051,38 @@ void TabSI::generateEntryLine(gdioutput &gdi, pRunner r) {
   gdi.setCX(gdi.getCX()+gdi.scaleLength(20));
 
   gdi.addCheckbox("RentCard", "Hyrbricka", SportIdentCB, storedInfo.rentState);
+  gdi.addCheckbox("NoTiming", "Utan tidtagning", nullptr, false);
+
   if (oe->hasNextStage())
     gdi.addCheckbox("AllStages", "Anmäl till efterföljande etapper", SportIdentCB, storedInfo.allStages);
-      
+  
   if (r!=0) {
     if (r->getCardNo()>0)
       gdi.setText("CardNo", r->getCardNo());
 
     gdi.setText("Name", r->getNameRaw());
-    if (gdi.hasField("Club")) {
+    if (gdi.hasWidget("Club")) {
       gdi.selectItemByData("Club", r->getClubId());
     }
     gdi.selectItemByData("Class", r->getClassId(true));
 
     oDataConstInterface dci = r->getDCI();
-    if (gdi.hasField("Fee"))
+    if (gdi.hasWidget("Fee"))
       gdi.setText("Fee", oe->formatCurrency(dci.getInt("Fee")));
 
+    gdi.setText("StartTime", r->getStartTimeS());
     gdi.setText("Phone", dci.getString("Phone"));
     gdi.setText("Bib", r->getBib());
-
+    gdi.check("NoTiming", r->hasFlag(oAbstractRunner::TransferFlags::FlagNoTiming));
     gdi.check("RentCard", dci.getInt("CardFee") != 0);
-    if (gdi.hasField("Paid"))
+    if (gdi.hasWidget("Paid"))
       gdi.check("Paid", dci.getInt("Paid")>0);
-    else if (gdi.hasField("PayMode")) {
+    else if (gdi.hasWidget("PayMode")) {
       int paidId = dci.getInt("Paid") > 0 ? r->getPaymentMode() : 1000;
       gdi.selectItemByData("PayMode", paidId);
     }
 
-    if (gdi.hasField("AllStages")) {
+    if (gdi.hasWidget("AllStages")) {
       gdi.check("AllStages", r->hasFlag(oRunner::FlagTransferNew));
     }
   }
@@ -2926,7 +3125,7 @@ void TabSI::updateEntryInfo(gdioutput &gdi)
   wstring method;
   if (oe->getMeOSFeatures().hasFeature(MeOSFeatures::Economy)) {
     bool invoice = true; 
-    if (gdi.hasField("PayMode")) {
+    if (gdi.hasWidget("PayMode")) {
       invoice = gdi.getSelectedItem("PayMode").first == 1000;
     }
     else
@@ -2956,7 +3155,7 @@ void TabSI::generateSplits(const pRunner r, gdioutput &gdi)
   else {
     gdioutput gdiprint(2.0, gdi.getHWNDTarget(), splitPrinter);
     vector<int> mp;
-    r->evaluateCard(true, mp);
+    r->evaluateCard(true, mp, 0, oBase::ChangeType::Quiet);
     r->printSplits(gdiprint);
     printProtected(gdi, gdiprint);
     //gdiprint.print(splitPrinter, oe, false, true);
@@ -3217,7 +3416,7 @@ void TabSI::showModeCardData(gdioutput &gdi) {
   gdi.dropLine(3);
   gdi.popX();
   bool first = true;
-  for (list<pair<int, SICard> >::iterator it = savedCards.begin(); it != savedCards.end(); ++it) {
+  for (auto it = savedCards.begin(); it != savedCards.end(); ++it) {
     gdi.dropLine(0.5);
     if (!first) {
       RECT rc = {30, gdi.getCY(), gdi.scaleLength(250), gdi.getCY() + 3};
@@ -3225,7 +3424,7 @@ void TabSI::showModeCardData(gdioutput &gdi) {
     }
     first = false;
 
-    printCard(gdi, it->first, false);
+    printCard(gdi, it->first, &it->second, false);
   }
 }
 
@@ -3235,10 +3434,10 @@ void TabSI::EditCardData::handle(gdioutput &gdi, BaseInfo &info, GuiEventType ty
     int cardId = ti.getExtraInt();
     SICard &card = tabSI->getCard(cardId);
     ti.id = "card" + itos(cardId);
-    gdi.removeControl("CardName");
-    gdi.removeControl("ClubName");
-    gdi.removeControl("OKCard");
-    gdi.removeControl("CancelCard");
+    gdi.removeWidget("CardName");
+    gdi.removeWidget("ClubName");
+    gdi.removeWidget("OKCard");
+    gdi.removeWidget("CancelCard");
 
     wstring name, club;
     if (card.firstName[0])
@@ -3283,10 +3482,10 @@ void TabSI::EditCardData::handle(gdioutput &gdi, BaseInfo &info, GuiEventType ty
       gdi.setText("card" + itos(cardId), s, true);
     }
 
-    gdi.removeControl("CardName");
-    gdi.removeControl("ClubName");
-    gdi.removeControl("OKCard");
-    gdi.removeControl("CancelCard");
+    gdi.removeWidget("CardName");
+    gdi.removeWidget("ClubName");
+    gdi.removeWidget("OKCard");
+    gdi.removeWidget("CancelCard");
   }
   else if (type == GUI_FOCUS) {
     InputInfo &ii = dynamic_cast<InputInfo &>(info);
@@ -3297,8 +3496,11 @@ void TabSI::EditCardData::handle(gdioutput &gdi, BaseInfo &info, GuiEventType ty
   }
 }
 
-void TabSI::printCard(gdioutput &gdi, int cardId, bool forPrinter) const {
-  SICard &c = getCard(cardId);
+void TabSI::printCard(gdioutput &gdi, int cardId, SICard *crdRef, bool forPrinter) const {
+  if (crdRef == nullptr)
+    crdRef = &getCard(cardId);
+  
+  SICard &c = *crdRef;
   if (c.readOutTime[0] == 0)
     strcpy_s(c.readOutTime, getLocalTimeN().c_str());
 
@@ -3421,7 +3623,7 @@ int TabSI::analyzePunch(SIPunch &p, int &start, int &accTime, int &days) {
 
 void TabSI::generateSplits(int cardId, gdioutput &gdi) {
   gdioutput gdiprint(2.0, gdi.getHWNDTarget(), splitPrinter);
-  printCard(gdiprint, cardId, true);
+  printCard(gdiprint, cardId, nullptr, true);
   printProtected(gdi, gdiprint);
 }
 
@@ -3511,7 +3713,7 @@ void TabSI::createCompetitionFromCards(gdioutput &gdi) {
   if (zeroTime < 0)
     zeroTime += 3600 * 24;
   zeroTime -= zeroTime % 1800;
-  oe->setZeroTime(formatTime(zeroTime));
+  oe->setZeroTime(formatTime(zeroTime), false);
 
   // Add competitors
   for (size_t k = 0; k < cards.size(); k++) {
@@ -3578,6 +3780,17 @@ void TabSI::clearCompetitionData() {
   checkedCardFlags.clear();
   currentAssignIndex = 0;
   warnedClassOutOfMaps.clear();
+
+  lockedFunction = false;
+  allowControl = true;
+  allowFinish = true;
+  allowStart = false;
+
+  if (mode == ModeCardData)
+    mode = SIMode::ModeReadOut;
+
+  logger.reset();
+  numSavedCardsOnCmpOpen = savedCards.size();
 }
 
 SICard &TabSI::getCard(int id) const {
@@ -3633,7 +3846,7 @@ wstring TabSI::getCardInfo(bool param, vector<int> &count) const {
 
 void TabSI::showRegisterHiredCards(gdioutput &gdi) {
   gdi.disableInput("Interactive");
-  gdi.disableInput("Database");
+  gdi.disableInput("Database", true);
   gdi.disableInput("PrintSplits");
   gdi.disableInput("UseManualInput");
 
@@ -3761,7 +3974,7 @@ void TabSI::showCheckCardStatus(gdioutput &gdi, const string &cmd) {
         wstring cp = r[k]->getCompleteIdentification();
 
         if (r[k]->getStatus() != StatusUnknown)
-          cp += L" " + r[k]->getStatusS(true);
+          cp += L" " + r[k]->getStatusS(true, true);
         else
           cp += makeDash(L" -");
 
@@ -3889,7 +4102,7 @@ bool TabSI::writePayMode(gdioutput &gdi, int amount, oRunner &r) {
   int paid = 0;
   bool hasPaid = false;
       
-  if (gdi.hasField("PayMode"))
+  if (gdi.hasWidget("PayMode"))
     hasPaid = gdi.getSelectedItem("PayMode").first != 1000;
 
   bool fixPay = gdi.isChecked("Paid");
@@ -3928,7 +4141,7 @@ bool TabSI::checkpPrintQueue(gdioutput &gdi) {
     printPunchRunnerIdQueue.pop_front();
     pRunner r = oe->getRunner(rid, 0);
     if (r) {
-      r->evaluateCard(true, mp);
+      r->evaluateCard(true, mp, 0, oBase::ChangeType::Quiet);
       r->printSplits(gdiprint);
     }
     gdiprint.dropLine(4);
@@ -3950,7 +4163,7 @@ void TabSI::printSIInfo(gdioutput &gdi, const wstring &port) const {
 oClub *TabSI::extractClub(gdioutput &gdi) const {
   auto &db = oe->getRunnerDatabase();
   oClub *dbClub = nullptr;
-  if (gdi.hasField("Club")) {
+  if (gdi.hasWidget("Club")) {
     int clubId = gdi.getExtraInt("Club");
     if (clubId > 0) {
       dbClub = db.getClub(clubId-1);
@@ -4128,14 +4341,14 @@ void TabSI::handleAutoComplete(gdioutput &gdi, AutoCompleteInfo &info) {
         }
       }
       if (r) {
-        if (gdi.hasField("Club") && r->dbe().clubNo) {
+        if (gdi.hasWidget("Club") && r->dbe().clubNo) {
           if (gdi.getText("Club").empty()) {
             auto pclub = oe->getRunnerDatabase().getClub(r->dbe().clubNo);
             if (pclub)
               gdi.setText("Club", pclub->getName());
           }
         }
-        if (gdi.hasField("CardNo") && r->dbe().cardNo) {
+        if (gdi.hasWidget("CardNo") && r->dbe().cardNo) {
           if (gdi.getText("CardNo").empty())
             gdi.setText("CardNo", r->dbe().cardNo);
         }
@@ -4146,7 +4359,49 @@ void TabSI::handleAutoComplete(gdioutput &gdi, AutoCompleteInfo &info) {
   gdi.TabFocus(1);
 }
 
-
 bool TabSI::showDatabase() const {
   return useDatabase && oe->useRunnerDb();
+}
+void TabSI::playReadoutSound(SND type) {
+  if (!oe->getPropertyInt("PlaySound", 0))
+    return;
+  int res = -1;
+  wstring fn;
+  switch (type) {
+  case SND::OK:
+    fn = oe->getPropertyString("SoundOK", L"");
+    res = 50;
+    break;
+  case SND::NotOK:
+    fn = oe->getPropertyString("SoundNotOK", L"");
+    res = 52;
+    break;
+  case SND::Leader:
+    fn = oe->getPropertyString("SoundLeader", L"");
+    res = 51;
+    break;
+  case SND::ActionNeeded:
+    fn = oe->getPropertyString("SoundAction", L"");
+    res = 53;
+    break;
+  }
+
+  if (checkedSound.count(fn) || (!fn.empty() && fileExists(fn))) {
+    playSoundFile(fn);
+    checkedSound.insert(fn);
+  }
+  else {
+    playSoundResource(res);
+  }
+}
+
+void TabSI::playSoundResource(int res) const {
+  PlaySound(MAKEINTRESOURCE(res), GetModuleHandle(nullptr), SND_RESOURCE| SND_ASYNC);
+  //OutputDebugString((L"Play: " + itow(res)).c_str());
+
+}
+
+void TabSI::playSoundFile(const wstring& file) const {
+  PlaySound(file.c_str(), nullptr, SND_FILENAME | SND_ASYNC);
+  //OutputDebugString(file.c_str());
 }

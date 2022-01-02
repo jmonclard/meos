@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -511,7 +511,7 @@ bool gdioutput::doPrint(PrinterObject &po, PageInfo &pageInfo, pEvent oe, bool r
   return true;
 }
 
-UINT CALLBACK PagePaintHook(HWND, UINT uiMsg, WPARAM wParam, LPARAM lParam) {
+UINT_PTR  CALLBACK PagePaintHook(HWND, UINT uiMsg, WPARAM wParam, LPARAM lParam) {
   return false;
 }
 

@@ -1,17 +1,11 @@
 ﻿// oBase.h: interface for the oBase class.
 //
 //////////////////////////////////////////////////////////////////////
-
-#if !defined(AFX_OBASE_H__C950D806_EEC7_4C56_B298_132C67FCF719__INCLUDED_)
-#define AFX_OBASE_H__C950D806_EEC7_4C56_B298_132C67FCF719__INCLUDED_
-
-#if _MSC_VER > 1000
 #pragma once
-#endif // _MSC_VER > 1000
 
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -42,36 +36,8 @@ class oDataInterface;
 class oDataConstInterface;
 class oDataContainer;
 typedef void * pvoid;
-typedef vector< vector<wstring> > * pvectorstr;
-
-enum RunnerStatus {StatusOK=1, StatusDNS=20, StatusCANCEL = 21, StatusMP=3,
-                   StatusDNF=4, StatusDQ=5, StatusMAX=6,
-                   StatusUnknown=0, StatusNotCompetiting=99};
-
-extern char RunnerStatusOrderMap[100];
-
-enum SortOrder {ClassStartTime,
-                ClassTeamLeg,
-                ClassResult,
-                ClassCourseResult,
-                ClassTotalResult,
-                ClassTeamLegResult,
-                ClassFinishTime,
-                ClassStartTimeClub,
-                ClassPoints,
-                ClassLiveResult,
-	              ClassKnockoutTotalResult,
-                SortByName,
-                SortByLastName,
-                SortByFinishTime,
-                SortByFinishTimeReverse,
-                SortByStartTime,
-                SortByStartTimeClass,
-                CourseResult,
-                CourseStartTime,
-                SortByEntryTime,
-                Custom,
-                SortEnumLastItem};
+typedef vector<vector<wstring>> * pvectorstr;
+struct SqlUpdated;
 
 class oBase {
 public:
@@ -85,21 +51,27 @@ public:
 
     friend class oBase;
   };
+
+  /** Indicate if a change is transient (quiet) or should be written to database. */
+  enum class ChangeType {
+    Quiet,
+    Update
+  };
+
 private:
-  void storeChangeStatus() {reChanged = changed;}
-  void resetChangeStatus() {changed &= reChanged;}
-  bool reChanged;
-  bool changed;
-  bool localObject;
-  const static unsigned long long BaseGenStringFlag = 1ull << 63;
-  const static unsigned long long Base36StringFlag = 1ull << 62;
-  const static unsigned long long ExtStringMask = ~(BaseGenStringFlag|Base36StringFlag);
-  shared_ptr<oBaseReference> myReference;
 
 protected:
   int Id;
   TimeStamp Modified;
   string sqlUpdated; //SQL TIMESTAMP
+
+private:
+  const static unsigned long long BaseGenStringFlag = 1ull << 63;
+  const static unsigned long long Base36StringFlag = 1ull << 62;
+  const static unsigned long long ExtStringMask = ~(BaseGenStringFlag | Base36StringFlag);
+  shared_ptr<oBaseReference> myReference;
+
+protected:
   int counter;
   oEvent *oe;
   bool Removed;
@@ -113,12 +85,13 @@ private:
   
   bool implicitlyAdded = false;
   bool addedToEvent = false;
+  // Changed in client, not yet sent to server
+  bool changed;
+  // Changed in client, silent mode, should not be sent to server
+  bool transientChanged;
+  bool localObject;
 
 protected:
-
-  /// Mark the object as changed (on client) and that it needs synchronize to server
-  virtual void updateChanged();
-
   /// Mark the object as "changed" (locally or remotely), eg lists and other views may need update
   virtual void changedObject() = 0;
 
@@ -131,7 +104,17 @@ protected:
 
   void setLocalObject() { localObject = true; }
 
+  // Merge into this entity
+  virtual void merge(const oBase &input, const oBase *base) = 0;
+
+  void clearDuplicateBase(int newId);
+
 public:
+
+  /// Mark the object as changed (on client) and that it needs synchronize to server
+  void updateChanged(ChangeType ct = ChangeType::Update);
+
+  void update(SqlUpdated &info) const;
 
   // Get a safe reference to this object
   const shared_ptr<oBaseReference> &getReference() {
@@ -149,8 +132,10 @@ public:
   virtual wstring getInfo() const = 0;
 
   //Called (by a table) when user enters data in a cell
-  virtual bool inputData(int id, const wstring &input, int inputId,
-                         wstring &output, bool noUpdate) {output=L""; return false;}
+  // Returned first is zero or a second table row to reload.
+  // Returned second is true to reload entire table
+  virtual pair<int, bool> inputData(int id, const wstring &input, int inputId,
+                                    wstring &output, bool noUpdate) {output=L""; return make_pair(0,false);}
 
   //Called (by a table) to fill a list box with contents in a table
   virtual void fillInput(int id, vector< pair<wstring, size_t> > &elements, size_t &selected)
@@ -162,16 +147,20 @@ public:
   bool isRemoved() const {return Removed;}
   int getAge() const {return Modified.getAge();}
   unsigned int getModificationTime() const {return Modified.getModificationTime();}
-  
+  // If there is a change marked as quiet, make it permanent.
+  void makeQuietChangePermanent();
+
   bool synchronize(bool writeOnly=false);
   wstring getTimeStamp() const;
-
+  string getTimeStampN() const;
+  const string &getStamp() const;
+    
   bool existInDB() const { return !sqlUpdated.empty(); }
 
   void setImplicitlyCreated() { implicitlyAdded = true; }
   bool isImplicitlyCreated() const { return implicitlyAdded; }
   bool isAddedToEvent() const { return addedToEvent; }
-  void addToEvent() { addedToEvent = true; }
+  void addToEvent(oEvent *e, const oBase *src);
 
   oDataInterface getDI();
 
@@ -200,6 +189,9 @@ public:
   static __int64 converExtIdentifierString(const wstring &str);
 
   oBase(oEvent *poe);
+  oBase(const oBase &in);
+  oBase(oBase &&in);
+  const oBase &operator=(const oBase &in);
   virtual ~oBase();
 
   friend class RunnerDB;
@@ -211,5 +203,3 @@ public:
 };
 
 typedef oBase * pBase;
-
-#endif // !defined(AFX_OBASE_H__C950D806_EEC7_4C56_B298_132C67FCF719__INCLUDED_)

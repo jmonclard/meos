@@ -11,7 +11,7 @@
 
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -91,8 +91,16 @@ protected:
 
   void changedObject();
 
+  static void generateTableData(oEvent *oe, Table &table, oCourse *addControl);
+  void addTableRow(Table &table) const;
+
+  pair<int, bool>  inputData(int id, const wstring &input,
+                             int inputId, wstring &output, bool noUpdate) override;
+  void fillInput(int id, vector<pair<wstring, size_t>> &out, size_t &selected) override;
+
 public:
 
+  static const shared_ptr<Table> &getTable(oEvent *oe);
   // Get an identity sum based on controls
   int getIdSum(int nControls);
 
@@ -201,7 +209,7 @@ public:
   bool fillCourse(gdioutput &gdi, const string &name);
 
   /** Returns true if changed. */
-  bool importControls(const string &cstring, bool updateLegLengths);
+  bool importControls(const string &cstring, bool setChanged, bool updateLegLengths);
   void importLegLengths(const string &legs, bool setChanged);
 
   /** Returns the length of the i:th leg (or 0 if unknown)*/
@@ -230,6 +238,8 @@ public:
 
   wstring getStart() const;
   void setStart(const wstring &start, bool sync);
+
+  void merge(const oBase &input, const oBase *base) final;
 
   bool Write(xmlparser &xml);
 

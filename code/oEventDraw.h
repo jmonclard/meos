@@ -2,7 +2,7 @@
 
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,28 +22,33 @@
 
 ************************************************************************/
 
+#include "oEvent.h"
+
 struct ClassDrawSpecification {
-  int classID; 
+  int classID;
+  int startGroup = 0;
   int leg;
   mutable int firstStart;
   mutable int interval;
   int vacances;
   mutable int ntimes;
-
-  ClassDrawSpecification() : ntimes(0) {}
-  ClassDrawSpecification(int classID, int leg, int firstStart, int interval, int vacances) :
+  oEvent::VacantPosition vacantPosition;
+  ClassDrawSpecification() : ntimes(0), vacantPosition(oEvent::VacantPosition::Mixed) {}
+  ClassDrawSpecification(int classID, int leg, int firstStart, int interval, int vacances, oEvent::VacantPosition vp) :
                          classID(classID), leg(leg), firstStart(firstStart), 
-                         interval(interval), vacances(vacances), ntimes(0) {}
+                         interval(interval), vacances(vacances), ntimes(0), vacantPosition(vp) {}
 };
 
 
 /** Struct with info to draw a class */
 struct ClassInfo {
   int classId;
+  int startGroupId;
   pClass pc;
 
   int firstStart;
   int interval;
+  int fixedInterval;
 
   int unique;
   int courseId;

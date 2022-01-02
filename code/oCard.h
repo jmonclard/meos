@@ -11,7 +11,7 @@
 
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -53,9 +53,11 @@ class oCard : public oBase {
 protected:
   oPunchList punches;
   int cardNo;
-  DWORD readId; //Identify a specific read-out
+  int miliVolt = 0; // Measured voltage of SIAC, if not zero.
 
-  const static DWORD ConstructedFromPunches = 1;
+  unsigned int readId; //Identify a specific read-out
+
+  const static int ConstructedFromPunches = 1;
 
   pRunner tOwner;
   oPunch *getPunch(const pPunch punch);
@@ -65,13 +67,22 @@ protected:
   /** Get internal data buffers for DI */
   oDataContainer &getDataBuffers(pvoid &data, pvoid &olddata, pvectorstr &strData) const;
 
-  static bool comparePunchTime(oPunch *p1, oPunch *p2);
-
   void changedObject();
 
   mutable string punchString;
 
 public:
+
+  void setMeasuredVoltage(int miliVolt) { this->miliVolt = miliVolt; }
+  wstring getCardVoltage() const;
+  enum class BatteryStatus {
+    OK,
+    Warning,
+    Bad
+  };
+  BatteryStatus isCriticalCardVoltage() const;
+
+  static const shared_ptr<Table> &getTable(oEvent *oe);
 
   // Returns true if the card was constructed from punches.
   bool isConstructedFromPunches() {return ConstructedFromPunches == readId;}
@@ -129,6 +140,9 @@ public:
   void setCardNo(int c);
   void importPunches(const string &s);
   const string &getPunchString() const;
+
+  void merge(const oBase &input, const oBase *base) final;
+  pair<int, int> getCardHash() const;
 
   void Set(const xmlobject &xo);
   bool Write(xmlparser &xml);

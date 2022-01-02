@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -36,11 +36,192 @@
 #include "meos_util.h"
 #include "localizer.h"
 #include "gdifonts.h"
+#include "autocomplete.h"
 
 extern oEvent *gEvent;
 
 const int MAXLISTPARAMID = 10000000;
 using namespace tr1;
+
+
+class PositionVer2 {
+  struct Block {
+    Block(int position, int indent, int width, bool packPrevious) : position(position),
+                                                                    indent(indent), width(width),
+                                                                    packPrevious(packPrevious), originalPos(position) {
+    
+    }
+    int position; // Actual position
+    int indent; // Indent inside block
+    bool packPrevious; // Do not move from 
+    const int originalPos; // Original position
+    int width;    // Original block width
+    int end() const { return position + width; }
+    int getPos() const { return position + indent; }
+    int getOriginalPos() const { return originalPos + indent; }
+
+    vector<pair<int, int>> alignWith;
+
+  };
+  map<string, pair<int, int>> pmap; // Map from label into block
+  vector<vector<Block>> blocks; // Pair of position, specified (minimal) width
+  
+  void move(int row, int ix, int newPos) {
+    auto &b = blocks[row][ix];
+    int delta = newPos - b.position;
+    if (delta == 0)
+      return;
+    assert(delta > 0);
+        
+    //b.position += delta;
+    if (ix > 0 && b.packPrevious)
+      move(row, ix - 1, blocks[row][ix-1].position + delta);
+    else {
+      // Move rest of row
+      for (size_t j = ix; j < blocks[row].size(); j++)
+        blocks[row][j].position += delta;
+
+      // Move aligned blocks
+      for (auto &a : b.alignWith)
+        move(a.first, a.second, newPos);
+    }
+  }
+
+public:
+  PositionVer2() : blocks(1) {
+  }
+
+  int getWidth() const {
+    int w = 0;
+    for (auto &r : blocks) {
+      if (!r.empty()) {        
+        w = max(w, r.back().end());
+      }
+    }
+    return w;
+  }
+
+  void postAdjust() {
+
+  }
+
+  bool canMoveTo(int row, int ix, int newPos) const {
+    auto &r = blocks[row];
+    int delta = newPos - r[ix].position;
+    if (delta == 0)
+      return true;
+
+    if (std::abs(delta) > r[ix].width / 3 )
+      return false;
+
+    if (ix > 0 && r[ix].packPrevious && !canMoveTo(row, ix - 1, r[ix - 1].position + delta))
+      return false;
+  }
+
+  /*
+  int getAlignPos(int row, int pos) {
+    auto &r = blocks[row];
+    
+    vector<double> score(r.size());
+    for (size_t j = 0; j < r.size(); j++) {
+      for (r[j].packPrevious)
+        continue; // No align
+
+    }
+
+
+  }*/
+
+  void add(const string &name, int width, int indent, bool packPrevious) {
+    pmap[name] = make_pair(blocks.size() - 1, blocks.back().size());
+    int pos = 0;
+    if (blocks.back().size() > 0)
+      pos = blocks.back().back().end();
+    blocks.back().emplace_back(pos, indent, width + indent, packPrevious);
+  }
+
+  void add(const string &name, const int width) {
+    add(name, width, 0, false);
+  }
+
+  void addAlignWith(const string &alignWith, const string &newName,
+                    int width, int indent, bool packPrevious) {
+    auto align = pmap.find(alignWith);
+    if (align == pmap.end())
+      throw meosException("Internal error");
+    int row = align->second.first;
+    int ix = align->second.second;
+
+    int pos = 0;
+    if (blocks.back().size() > 0)
+      pos = blocks.back().back().end();
+
+    int apos = blocks[row][ix].position;
+    if (apos > pos)
+      pos = apos;
+    else 
+      move(row, ix, pos);
+
+    pair<int, int> q(blocks.size() - 1, blocks.back().size());
+    pmap[newName] = q;
+    blocks[row][ix].alignWith.emplace_back(q);
+
+    blocks.back().emplace_back(pos, indent, width, packPrevious);
+    blocks.back().back().alignWith.emplace_back(row, ix);    
+  }
+  
+  void addAlignNext(const string &newName, int width, int indent) {
+    int best = 10000;
+    string bestName;
+    
+    int pos = 0;
+    if (blocks.back().size() > 0)
+      pos = blocks.back().back().end();
+
+    for (auto &a : pmap) {
+      auto &b = blocks[a.second.first][a.second.second];
+      if (b.position >= pos) {
+        int delta = b.originalPos - pos;
+        if (delta <= best) {
+          best = delta;
+          bestName = a.first;
+        }
+      }
+    }
+    addAlignWith(bestName, newName, width, indent, false);
+  }
+
+
+  void newRow() {
+    if (!blocks.back().empty())
+      blocks.emplace_back();
+  }
+
+  int get(const string &name) const  {
+    return get(name, 1.0);
+  }
+
+  int get(const string &name, double scale) const {
+    auto &r = pmap.find(name);
+    if (r != pmap.end())
+      return int(blocks[r->second.first][r->second.second].getPos() * scale);
+    return 0;
+  }
+
+  int getOriginalPos(const string &name) {
+    return getOriginalPos(name, 1.0);
+  }
+
+  int getOriginalPos(const string &name, double scale) const {
+    auto &r = pmap.find(name);
+    if (r != pmap.end())
+      return int(blocks[r->second.first][r->second.second].getOriginalPos() * scale);
+    return 0;
+  }
+
+};
+
+
 
 oListParam::oListParam() {
   lockUpdate = false;
@@ -95,7 +276,7 @@ void oListParam::serialize(xmlparser &xml,
   xml.writeBool("Large", useLargeSize);
   xml.writeBool("PageBreak", pageBreak);
   xml.writeBool("HideHeader", !showHeader);
-
+  xml.write("AgeFilter", int(ageFilter));
   xml.writeBool("ShowNamedSplits", showInterTimes);
   xml.writeBool("ShowInterTitle", showInterTitle);
   xml.writeBool("ShowSplits", showSplitTimes);
@@ -162,7 +343,7 @@ void oListParam::deserialize(const xmlobject &xml, const MetaListContainer &cont
   showInterTitle = xml.getObjectBool("ShowInterTitle");
   inputNumber = xml.getObjectInt("InputNumber");
   nextList = xml.getObjectInt("NextList");
-
+  ageFilter = AgeFilter(xml.getObjectInt("AgeFilter"));
   xmlobject bg = xml.getObject("BGColor");
   if (bg)
     bgColor = bg.getInt();
@@ -304,17 +485,25 @@ void MetaList::initUniqueIndex() const {
   uniqueIndex = "A" + itos(ix) + "B" + itos(yx);
 }
 
-bool MetaList::isBreak(int x) const {
+bool MetaList::isBreak(int x) {
   return isspace(x) || x == '.' || x == ',' ||
           x == '-'  || x == ':' || x == ';' || x == '('
           || x == ')' || x=='/' || (x>30 && x < 127 && !isalnum(x));
 }
 
-wstring MetaList::encode(const wstring &input_) const {
+wstring MetaList::encode(EPostType type, const wstring &inputS, bool &foundSymbol) {
+  if (inputS.empty()) {
+    foundSymbol = true; // No symbol needed
+    return inputS;
+  }
   wstring out;
-  wstring input = lang.tl(input_);
+  wstring input = lang.tl(inputS);
+  
   out.reserve(input.length() + 5);
-
+  int sCount = 0;
+  if (type == EPostType::lString)
+    sCount = 1; // No symbols expected in string
+  
   for (size_t k = 0; k<input.length(); k++) {
     int c = input[k];
     int p = k > 0 ? input[k-1] : ' ';
@@ -324,20 +513,22 @@ wstring MetaList::encode(const wstring &input_) const {
       out.push_back('%');
       out.push_back('%');
     }
-    else if (c == 'X' &&  isBreak(n) && isBreak(p) ) {
+    else if (c == 'X' &&  isBreak(n) && isBreak(p) && sCount == 0) {
       out.push_back('%');
       out.push_back('s');
+      sCount++;
     }
     else
       out.push_back(c);
   }
+
+  foundSymbol = sCount > 0;
   return out;
 }
 
 MetaListPost &MetaList::add(ListIndex ix, const MetaListPost &post) {
   if (data[ix].empty())
     addRow(ix);
-  //  data[ix].resize(1);
 
   vector<MetaListPost> &d = data[ix].back();
   d.push_back(post);
@@ -358,15 +549,14 @@ static void setFixedWidth(oPrintPost &added,
     added.fixedWidth = 0;
 }
 
-void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par,
-                         int lineHeight, oListInfo &li) const {
+void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par, oListInfo &li) const {
   const MetaList &mList = *this;
-  Position pos;
+  PositionVer2 pos;
   const bool large = par.useLargeSize;
   li.lp = par;
   gdiFonts normal, header, small, italic;
   double s_factor;
-
+  oe->calculateResults({}, oEvent::ResultType::ClassResult, false);
   map<pair<gdiFonts, int>, int> fontHeight;
 
   for (size_t k = 0; k < fontFaces.size(); k++) {
@@ -376,19 +566,20 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
         if (fontFaces[k].scale > 0 && fontFaces[k].scale != 100) {
           face += L";" + itow(fontFaces[k].scale/100) + L"." + itow(fontFaces[k].scale%100);
         }
-        fontHeight[make_pair(it->first, int(k))] = gdi.getLineHeight(it->first, face.c_str());
+        fontHeight[make_pair(it->first, int(k))] = int(gdi.getLineHeight(it->first, face.c_str()) / gdi.getScale());
     }
   }
-
+  int lineHeight;
   if (large) {
     s_factor = 0.9;
     normal = fontLarge;
     header = boldLarge;
     small = normalText;
-    lineHeight = int(lineHeight *1.6);
+    lineHeight = 22;
     italic = italicMediumPlus;
   }
   else {
+    lineHeight = 14;
     s_factor = 1.0;
     normal = normalText;
     header = boldText;
@@ -396,7 +587,7 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
     italic = italicText;
   }
 
-  map<EPostType, string> labelMap;
+  map<pair<EPostType, int>, string> labelMap; // From <type, leg> to label
   map<wstring, string> stringLabelMap;
 
   set<EPostType> skip;
@@ -405,6 +596,8 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
   li.rogainingResults = false;
   li.calculateLiveResults = false;
   li.calcCourseClassResults = false;
+  li.calcCourseResults = false;
+
   if (par.useControlIdResultFrom > 0 || par.useControlIdResultTo > 0)
     li.needPunches = oListInfo::PunchMode::SpecificPunch;
   const bool isPunchList = mList.listSubType == oListInfo::EBaseTypeCoursePunches ||
@@ -416,7 +609,26 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
   }
   
   map<tuple<int, int, int>, int> indexPosToWidth;
-  map< pair<int, int>, int> linePostCount;
+  map<pair<int, int>, int> linePostCount;
+
+  vector<vector<vector<MetaListPost>>> dataCopy(4);
+
+  auto getHead = [&dataCopy]() -> const vector<vector<MetaListPost>>& {
+    return dataCopy[MLHead];
+  };
+
+  auto getSubHead = [&dataCopy]() -> const vector<vector<MetaListPost>>& {
+    return dataCopy[MLSubHead];
+  };
+
+  auto getList = [&dataCopy]() -> const vector<vector<MetaListPost>>&{
+    return dataCopy[MLList];
+  };
+
+  auto subListIx = [&dataCopy]() -> const vector<vector<MetaListPost>>& {
+    return dataCopy[MLSubList];
+  };
+
   for (int i = 0; i<4; i++) {
     const vector< vector<MetaListPost> > &lines = mList.data[i];
     gdiFonts defaultFont = normal;
@@ -433,11 +645,40 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
       }
     }
     
+    auto isAllStageType = [](const MetaListPost &mp) {
+      return MetaList::isAllStageType(mp.type) && mp.leg == -1;
+    };
+
     for (size_t j = 0; j<lines.size(); j++) {
       if (i == 0 && j == 0)
         defaultFont = boldLarge;
+     
+      dataCopy[i].emplace_back();
+      vector<MetaListPost> &lineCopy = dataCopy[i].back();
 
-      const vector<MetaListPost> &cline = lines[j];
+      int firstStage = -1;
+      for (size_t k = 0; k < lines[j].size(); k++) {
+        if (isAllStageType(lines[j][k])) {
+          if (firstStage == -1)
+            firstStage = k;
+
+          if (k + 1 == lines[j].size() || !isAllStageType(lines[j][k + 1])) {
+            int ns = min(oe->getStageNumber(), 30);
+            for (int s = 1; s < ns; s++) {
+              for (size_t f = firstStage; f <= k; f++) {
+                lineCopy.push_back(lines[j][f]);
+                lineCopy.back().leg = s - 1;
+              }
+            }
+            firstStage = -1;
+          }
+        }
+        else {
+          lineCopy.push_back(lines[j][k]);
+        }
+      }
+
+      const vector<MetaListPost> &cline = lineCopy;
       for (size_t k = 0; k<cline.size(); k++) {
         const MetaListPost &mp = cline[k];
         int extraMinWidth = 0;
@@ -449,7 +690,7 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
         if (mp.type == lTeamPlace || mp.type == lRunnerPlace || mp.type == lRunnerGeneralPlace) {
           if (!li.calcResults) {
             oe->calculateResults(set<int>(), oEvent::ResultType::ClassResult);
-            oe->calculateTeamResults(false);
+            oe->calculateTeamResults(set<int>(), oEvent::ResultType::ClassResult);
           }
           li.calcResults = true;
         }
@@ -458,7 +699,7 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
                 || mp.type == lRunnerGeneralPlace) {
           if (!li.calcTotalResults) {
             oe->calculateResults(set<int>(), oEvent::ResultType::TotalResult);
-            oe->calculateTeamResults(true);
+            oe->calculateTeamResults(set<int>(), oEvent::ResultType::TotalResult);
           }
           li.calcTotalResults = true;
         }
@@ -471,6 +712,12 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
             oe->calculateResults(set<int>(), oEvent::ResultType::ClassCourseResult);
 
           li.calcCourseClassResults = true;
+        }
+        else if (mp.type == lRunnerCoursePlace) {
+          if (!li.calcCourseResults)
+            oe->calculateResults(set<int>(), oEvent::ResultType::ClassCourseResult);
+
+          li.calcCourseResults = true;
         }
         else if (mp.type == lRunnerTempTimeAfter || mp.type == lRunnerTempTimeStatus) {
           if (li.needPunches == oListInfo::PunchMode::NoPunch)
@@ -490,12 +737,13 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
           if (mp.font != formatIgnore)
             font = mp.font;
 
-          vector< pair<EPostType, wstring> > typeFormats;
-          typeFormats.push_back(make_pair(mp.type, encode(mp.text)));
+          bool dmy;
+          vector<pair<EPostType, wstring>> typeFormats;
+          typeFormats.push_back(make_pair(mp.type, encode(mp.type, mp.text, dmy)));
           size_t kk = k+1;
           //Add merged entities
           while (kk < cline.size() && cline[kk].mergeWithPrevious) {
-            typeFormats.push_back(make_pair(cline[kk].type, encode(cline[kk].text)));
+            typeFormats.push_back(make_pair(cline[kk].type, encode(cline[kk].type, cline[kk].text, dmy)));
             kk++;
           }
           
@@ -503,34 +751,46 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
                                      oPrintPost::encodeFont(fontFaces[i].font, 
                                      fontFaces[i].scale).c_str(), 
                                      large, max(mp.blockWidth, extraMinWidth));
+
           ++linePostCount[make_pair(i, j)]; // Count how many positions on this line
           indexPosToWidth[tuple<int,int,int>(i, j, k)] = width;
         }
 
         if (mp.alignType == lNone) {
-          pos.add(label, width, width);
-          pos.indent(mp.minimalIndent);
+          //pos.add(label, width, width);
+          //pos.indent(mp.minimalIndent);
+          pos.add(label, width, mp.minimalIndent, mp.packPrevious);
+          
         }
         else {
           if (mp.alignType == lAlignNext)
-            pos.alignNext(label, width, mp.alignBlock);
+            pos.addAlignNext(label, width, mp.minimalIndent);
+            //pos.alignNext(label, width, mp.alignBlock);
           else if (mp.alignType == lString) {
             if (stringLabelMap.count(mp.alignWithText) == 0) {
               throw meosException(L"Don't know how to align with 'X'#" + mp.alignWithText);
             }
-            pos.update(stringLabelMap[mp.alignWithText], label, width, mp.alignBlock, true);
+            //pos.update(stringLabelMap[mp.alignWithText], label, width, mp.alignBlock, true);
+            pos.addAlignWith(stringLabelMap[mp.alignWithText], label, width, mp.minimalIndent, mp.packPrevious);
           }
           else {
-            if (labelMap.count(mp.alignType) == 0) {
-              throw meosException(L"Don't know how to align with 'X'#" + typeToSymbol[mp.alignType]);
+            auto res = labelMap.find(make_pair(mp.alignType, mp.leg));
+            if (res == labelMap.end())
+              res = labelMap.find(make_pair(mp.alignType, -1));
+
+            if (res == labelMap.end()) {
+              throw meosException(L"Don't know how to align with 'X'#" + lang.tl(typeToSymbol[mp.alignType]));
             }
 
-            pos.update(labelMap[mp.alignType], label, width, mp.alignBlock, true);
+            //pos.update(res->second, label, width, mp.alignBlock, true);
+            pos.addAlignWith(res->second, label, width, mp.minimalIndent, mp.packPrevious);
           }
 
-          pos.indent(mp.minimalIndent);
+          //pos.indent(mp.minimalIndent);
         }
-        labelMap[mp.type] = label;
+        labelMap[make_pair(mp.type, mp.leg)] = label;
+        labelMap.emplace(make_pair(mp.type, -1), label);
+
         if (!mp.text.empty())
           stringLabelMap[mp.text] = label;
 
@@ -539,12 +799,13 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
     }
     pos.newRow();
   }
-
+  /*
   bool c = true;
   while (c) {
     c = pos.postAdjust();
-  }
+  }*/
 
+  pos.postAdjust();
   int dy = 0, next_dy = 0;
   oPrintPost *last = 0;
   oPrintPost *base = 0;
@@ -576,9 +837,9 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
   resultToIndex.clear();
   /*if (large == false && par.pageBreak == false) {*/
   {
-    int head_dy = gdi.scaleLength(mList.getExtraSpace(MLHead));
-    for (size_t j = 0; j<mList.getHead().size(); j++) {
-      const vector<MetaListPost> &cline = mList.getHead()[j];
+    int head_dy = mList.getExtraSpace(MLHead);
+    for (size_t j = 0; j < getHead().size(); j++) {
+      const vector<MetaListPost> &cline = getHead()[j];
       next_dy = 0;
       for (size_t k = 0; k<cline.size(); k++) {
         const MetaListPost &mp = cline[k];
@@ -586,7 +847,8 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
           continue;
 
         string label = "P" + itos(0*1000 + j*100 + k);
-        wstring text = makeDash(encode(cline[k].text));
+        bool dmy;
+        wstring text = makeDash(encode(cline[k].type, cline[k].text, dmy));
         if (capitalizeTitle)
           capitalizeWords(text);
 
@@ -631,13 +893,13 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
   }
 
   dy = lineHeight;
-  int subhead_dy = gdi.scaleLength(mList.getExtraSpace(MLSubHead));
+  int subhead_dy = mList.getExtraSpace(MLSubHead);
     
   last = 0;
   base = 0;
-  for (size_t j = 0; j<mList.getSubHead().size(); j++) {
+  for (size_t j = 0; j<getSubHead().size(); j++) {
     next_dy = 0;
-    const vector<MetaListPost> &cline = mList.getSubHead()[j];
+    const vector<MetaListPost> &cline = getSubHead()[j];
     for (size_t k = 0; k<cline.size(); k++) {
       const MetaListPost &mp = cline[k];
       if (skip.count(mp.type) == 1)
@@ -647,8 +909,8 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
       gdiFonts font = header;
       if (mp.font != formatIgnore)
         font = mp.font;
-
-      wstring text = encode(mp.text);
+      bool dmy;
+      wstring text = encode(mp.type, mp.text, dmy);
       if (capitalizeTitle)
         capitalizeWords(text);
 
@@ -681,10 +943,10 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
 
   last = 0;
   base = 0;
-  int list_dy = gdi.scaleLength(mList.getExtraSpace(MLList));//mList.getSubList().size() > 0 ? lineHeight/2 : 0;
+  int list_dy = mList.getExtraSpace(MLList);
   dy = 0;
-  for (size_t j = 0; j<mList.getList().size(); j++) {
-    const vector<MetaListPost> &cline = mList.getList()[j];
+  for (size_t j = 0; j < getList().size(); j++) {
+    const vector<MetaListPost> &cline = getList()[j];
     next_dy = 0;
     for (size_t k = 0; k<cline.size(); k++) {
       const MetaListPost &mp = cline[k];
@@ -697,7 +959,8 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
         font = mp.font;
 
       next_dy = max(next_dy, fontHeight[make_pair(font, MLList)]);
-      oPrintPost &added = li.addListPost(oPrintPost(mp.type, encode(mp.text), font|mp.textAdjust,
+      bool dmy;
+      oPrintPost &added = li.addListPost(oPrintPost(mp.type, encode(mp.type, mp.text, dmy), font|mp.textAdjust,
                                          pos.get(label, s_factor),
                                          dy + list_dy, cline[k].leg == -1 ? parLegNumber : make_pair(cline[k].leg, true))).
                                          setFontFace(fontFaces[MLList].font,
@@ -723,12 +986,12 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
     dy += next_dy;
   }
 
-  int sublist_dy = gdi.scaleLength(mList.getExtraSpace(MLSubList));
+  int sublist_dy = mList.getExtraSpace(MLSubList);
   last = 0;
   base = 0;
   dy = 0;
-  for (size_t j = 0; j<mList.getSubList().size(); j++) {
-    const vector<MetaListPost> &cline = mList.getSubList()[j];
+  for (size_t j = 0; j<getSubList().size(); j++) {
+    const vector<MetaListPost> &cline = getSubList()[j];
     next_dy = 0;
     for (size_t k = 0; k<cline.size(); k++) {
       const MetaListPost &mp = cline[k];
@@ -748,7 +1011,8 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
         xp = pos.get(label, s_factor);
 
       next_dy = max(next_dy, fontHeight[make_pair(font, MLSubList)]);
-      oPrintPost &added = li.addSubListPost(oPrintPost(mp.type, encode(mp.text), font|mp.textAdjust,
+      bool dmy;
+      oPrintPost &added = li.addSubListPost(oPrintPost(mp.type, encode(mp.type, mp.text, dmy), font|mp.textAdjust,
                                             xp, dy+sublist_dy, mp.leg == -1 ? parLegNumber : make_pair(mp.leg, true))).
                                             setFontFace(fontFaces[MLSubList].font,
                                                         fontFaces[MLSubList].scale);
@@ -791,8 +1055,18 @@ void MetaList::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par
   li.supportFrom = supportFromControl;
   li.supportTo = supportToControl;
   li.resType = getResultType();
-  if (!resultModule.empty() || li.calcResults || li.calcCourseClassResults || li.calcTotalResults)
+  if (!resultModule.empty() || li.calcResults || li.calcCourseClassResults 
+      || li.calcTotalResults || li.calcCourseResults)
     hasResults_ = true;
+
+  if (li.sortOrder == SortOrder::CourseResult) {
+    li.replaceType(EPostType::lRunnerPlace, EPostType::lRunnerCoursePlace, true);
+  }
+
+  if (li.sortOrder == SortOrder::ClassCourseResult) {
+    li.replaceType(EPostType::lRunnerPlace, EPostType::lRunnerClassCoursePlace, true);
+  }
+
 }
 
 void Position::indent(int ind) {
@@ -1080,7 +1354,7 @@ void MetaList::save(xmlparser &xml, const oEvent *oe) const {
     xml.write("ResultModule", ttw);
     try {
       wstring srcFile;
-      GeneralResult &gr = oe->getGeneralResult(resultModule, srcFile);
+      GeneralResult &gr = *oe->getGeneralResult(resultModule, srcFile);
       DynamicResult &dr = dynamic_cast<DynamicResult &>(gr);
       if (!dr.isBuiltIn()) {
         string ot = dr.getTag();
@@ -1158,7 +1432,7 @@ void MetaList::load(const xmlobject &xDef) {
 //    string db = "Loaded res mod: " + dr.getTag() + ", h=" + itos(dr.getHashCode())+ "\n";
 //    OutputDebugString(db.c_str());
     wstring file = L"*";
-    dynamicResults[k] = GeneralResultCtr(file, new DynamicResult(dr));
+    dynamicResults[k] = GeneralResultCtr(file, make_shared<DynamicResult>(dr));
   }
   supportFromControl = xDef.getObjectBool("SupportFrom");
   supportToControl = xDef.getObjectBool("SupportTo");
@@ -1242,7 +1516,8 @@ void MetaList::load(const xmlobject &xDef) {
         if (mp.type == lTeamPlace || mp.type == lRunnerPlace || mp.type == lRunnerFinish 
           || mp.type == lRunnerTempTimeStatus || mp.type == lRunnerTimeAfter ||
           mp.type == lRunnerTime || mp.type == lRunnerTimeStatus || mp.type == lRunnerTimeAfter
-          || mp.type == lRunnerTimePlaceFixed) {
+          || mp.type == lRunnerTimePlaceFixed || mp.type == lRunnerStageTime || mp.type == lRunnerStagePlace
+           || mp.type == lRunnerStageTimeStatus) {
           hasResults_ = true;
           break;
         }
@@ -1302,7 +1577,7 @@ void MetaList::load(const xmlobject &xDef) {
 void MetaList::getDynamicResults(vector<DynamicResultRef> &resultModules) const {
   resultModules.resize(dynamicResults.size());
   for (size_t k = 0; k < dynamicResults.size(); k++) {
-    resultModules[k].res = dynamic_cast<DynamicResult *>(dynamicResults[k].ptr);
+    resultModules[k].res = dynamic_pointer_cast<DynamicResult>(dynamicResults[k].ptr);
     resultModules[k].ctr = const_cast<MetaList *>(this);
   }
 }
@@ -1320,7 +1595,7 @@ const wstring &MetaList::getListInfo(const oEvent &oe) const {
   if (!resultModule.empty()) {
     wstring f;
     try {
-      GeneralResult &res = oe.getGeneralResult(resultModule, f);
+      GeneralResult &res = *oe.getGeneralResult(resultModule, f);
       DynamicResult &dres = dynamic_cast<DynamicResult &>(res);
       return dres.getDescription();
     }
@@ -1349,7 +1624,7 @@ void MetaList::retagResultModule(const string &newTag, bool retagStoredModule) {
 
   if (retagStoredModule) {
     for (size_t k = 0; k < dynamicResults.size(); k++) {
-      DynamicResult *res = dynamic_cast<DynamicResult *>(dynamicResults[k].ptr);
+      DynamicResult *res = dynamic_cast<DynamicResult *>(dynamicResults[k].ptr.get());
       if (res && res->getTag() == oldTag) {
         res->setTag(newTag);
       }
@@ -1359,7 +1634,7 @@ void MetaList::retagResultModule(const string &newTag, bool retagStoredModule) {
 
 bool MetaList::updateResultModule(const DynamicResult &dr, bool updateSimilar) {
   for (size_t k = 0; k < dynamicResults.size(); k++) {
-    DynamicResult *res = dynamic_cast<DynamicResult *>(dynamicResults[k].ptr);
+    DynamicResult *res = dynamic_cast<DynamicResult *>(dynamicResults[k].ptr.get());
     if (res) {
       const string &tag1 = res->getTag();
       const string &tag2 = dr.getTag();
@@ -1385,6 +1660,12 @@ bool MetaListContainer::updateResultModule(const DynamicResult &dr, bool updateS
       if (data[i].second.updateResultModule(dr, updateSimilar))
         changed = true;
     }
+  }
+
+  auto f = freeResultModules.find(dr.getTag());
+  if (f != freeResultModules.end()) {
+    f->second.ptr = make_shared<DynamicResult>(dr);
+    changed = true;
   }
 
   if (changed && owner)
@@ -1556,6 +1837,10 @@ void MetaListPost::serialize(xmlparser &xml) const {
     xml.writeBool("Align", "BlockAlign", alignBlock, MetaList::typeToSymbol[alignType]);
   xml.write("BlockWidth", blockWidth);
   xml.write("IndentMin", minimalIndent);
+  xml.write("PackPrevious", packPrevious);
+  xml.write("LimitWidth", limitWidth);
+
+
   if (font != formatIgnore)
     xml.write("Font", getFont());
   if (mergeWithPrevious)
@@ -1601,6 +1886,9 @@ void MetaListPost::deserialize(const xmlobject &xml) {
     }
     else alignType = MetaList::symbolToType[at];
   }
+
+  packPrevious = xml.getObjectBool("PackPrevious");
+  limitWidth = xml.getObjectBool("LimitWidth");
 
   mergeWithPrevious = xml.getObjectInt("MergePrevious") != 0;
   xml.getObjectString("TextAdjust", at);
@@ -1685,6 +1973,7 @@ void MetaList::initSymbols() {
     typeToSymbol[lRunnerLostTime] = L"RunnerTimeLost";
     typeToSymbol[lRunnerPlace] = L"RunnerPlace";
     typeToSymbol[lRunnerClassCoursePlace] = L"RunnerClassCoursePlace";
+    typeToSymbol[lRunnerCoursePlace] = L"RunnerCoursePlace";
     typeToSymbol[lRunnerStart] = L"RunnerStart";
     typeToSymbol[lRunnerCheck] = L"RunnerCheck";
     typeToSymbol[lRunnerStartCond] = L"RunnerStartCond";
@@ -1702,7 +1991,15 @@ void MetaList::initSymbols() {
     typeToSymbol[lRunnerTimeAdjustment] = L"RunnerTimeAdjustment";
     typeToSymbol[lRunnerPointAdjustment] = L"RunnerPointAdjustment";
     typeToSymbol[lRunnerRogainingPointGross] = L"RunnerRogainingPointGross";
-  
+    typeToSymbol[lRunnerCardVoltage] = L"RunnerCardVoltage";
+
+    typeToSymbol[lRunnerStageTime] = L"RunnerStageTime";
+    typeToSymbol[lRunnerStageStatus] = L"RunnerStageStatus";
+    typeToSymbol[lRunnerStageTimeStatus] = L"RunnerStageTimeStatus";
+    typeToSymbol[lRunnerStagePlace] = L"RunnerStagePlace";
+    typeToSymbol[lRunnerStagePoints] = L"RunnerStagePoints";
+    typeToSymbol[lRunnerStageNumber] = L"RunnerStageNumber";
+
     typeToSymbol[lRunnerUMMasterPoint] = L"RunnerUMMasterPoint";
     typeToSymbol[lRunnerTimePlaceFixed] = L"RunnerTimePlaceFixed";
     typeToSymbol[lRunnerLegNumberAlpha] = L"RunnerLegNumberAlpha";
@@ -1848,6 +2145,7 @@ void MetaList::initSymbols() {
     orderToSymbol[ClassStartTime] = "ClassStartTime";
     orderToSymbol[ClassStartTimeClub] = "ClassStartTimeClub";
     orderToSymbol[ClassResult] = "ClassResult";
+    orderToSymbol[ClassDefaultResult] = "ClassDefaultResult";
     orderToSymbol[ClassCourseResult] = "ClassCourseResult";
     orderToSymbol[SortByName] = "SortNameOnly";
     orderToSymbol[SortByLastName] = "SortLastNameOnly";
@@ -1890,6 +2188,7 @@ void MetaList::initSymbols() {
     filterToSymbol[EFilterAnyResult] = "FilterAnyResult";
     filterToSymbol[EFilterAPIEntry] = "EFilterAPIEntry";
     filterToSymbol[EFilterWrongFee] = "EFilterWrongFee";
+    filterToSymbol[EFilterIncludeNotParticipating] = "EFilterIncludeNotParticipating";
 
     for (map<EFilterList, string>::iterator it = filterToSymbol.begin();
       it != filterToSymbol.end(); ++it) {
@@ -2005,6 +2304,13 @@ void MetaListContainer::save(MetaListType type, xmlparser &xml, const oEvent *oe
       it->second.serialize(xml, *this, id2Ix);
     }
   }
+
+  for (auto res : freeResultModules) {
+    DynamicResult *dr = dynamic_cast<DynamicResult *>(res.second.ptr.get());
+    if (dr) {
+      dr->save(xml);
+    }
+  }
 }
 
 bool MetaListContainer::load(MetaListType type, const xmlobject &xDef, bool ignoreOld) {
@@ -2014,9 +2320,11 @@ bool MetaListContainer::load(MetaListType type, const xmlobject &xDef, bool igno
   xDef.getObjects("MeOSListDefinition", xList);
   wstring majVer = getMajorVersion();
   bool hasSkipped = false;
-
-  if (xList.empty() && strcmp(xDef.getName(), "MeOSListDefinition") == 0)
+  bool pushLevel = false;
+  if (xList.empty() && strcmp(xDef.getName(), "MeOSListDefinition") == 0) {
     xList.push_back(xDef);
+    pushLevel = true;
+  }
   wstring err;
   for (size_t k = 0; k<xList.size(); k++) {
     xmlattrib ver = xList[k].getAttrib("version");
@@ -2088,9 +2396,26 @@ bool MetaListContainer::load(MetaListType type, const xmlobject &xDef, bool igno
         it->second.nextList = 0; // Clear relation
     }
   }
+  if (!pushLevel) {
+    xDef.getObjects("MeOSResultCalculationSet", xList);
+    decltype(freeResultModules) copy;
+    freeResultModules.swap(copy);
+    for (auto res : xList) {
+      GeneralResultCtr ctr;
+      auto dr = make_shared<DynamicResult>();
+      dr->load(res);
+      if (copy.count(dr->getTag())) {
+        DynamicResult &oldResult = dynamic_cast<DynamicResult&>(*copy[dr->getTag()].ptr);
+        oldResult = *dr;
+        dr = dynamic_pointer_cast<DynamicResult>(copy[dr->getTag()].ptr);
+      }
 
-  if (owner)
-    owner->updateChanged();
+      freeResultModules.emplace(dr->getTag(), GeneralResultCtr(dr->getTag().c_str(), dr->getName(false), dr));
+    }
+
+    if (owner)
+      owner->updateChanged();
+  }
 
   if (!err.empty())
     throw meosException(err);
@@ -2257,12 +2582,11 @@ wstring MetaListContainer::makeUniqueParamName(const wstring &nameIn) const {
 }
 
 
-bool MetaListContainer::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par,
-                                  int lineHeight, oListInfo &li) const {
+bool MetaListContainer::interpret(oEvent *oe, const gdioutput &gdi, const oListParam &par, oListInfo &li) const {
 
   map<EStdListType, int>::const_iterator it = globalIndex.find(par.listCode);
   if (it != globalIndex.end()) {
-    data[it->second].second.interpret(oe, gdi, par, lineHeight, li);
+    data[it->second].second.interpret(oe, gdi, par, li);
     return true;
   }
   return false;
@@ -2284,23 +2608,38 @@ EStdListType MetaListContainer::getType(const int index) const {
 void MetaListContainer::getLists(vector<pair<wstring, size_t> > &lists, bool markBuiltIn, 
                                  bool resultListOnly, bool noTeamList) const {
   lists.clear();
-  for (size_t k = 0; k<data.size(); k++) {
-    if (data[k].first == RemovedList)
-      continue;
-    if (resultListOnly && !data[k].second.hasResults()) 
-      continue;
+  size_t currentIx = 0;
+  for (bool i : {false, true}) {
+    for (size_t k = 0; k < data.size(); k++) {
+      if (data[k].first == RemovedList)
+        continue;
+      if (resultListOnly && !data[k].second.hasResults())
+        continue;
 
-    if (noTeamList && data[k].second.getListType() == oListInfo::EBaseTypeTeam) 
-      continue;
+      if (noTeamList && data[k].second.getListType() == oListInfo::EBaseTypeTeam)
+        continue;
 
-    if (data[k].first == InternalList) {
-      if (markBuiltIn)
-        lists.push_back( make_pair(L"[" + lang.tl(data[k].second.getListName()) + L"]", k) );
+      if ((data[k].first == InternalList) == (i != markBuiltIn))
+        continue;
+
+      if (data[k].first == InternalList) {
+        if (markBuiltIn)
+          lists.push_back(make_pair(L"[" + lang.tl(data[k].second.getListName()) + L"]", k));
+        else
+          lists.push_back(make_pair(lang.tl(data[k].second.getListName()), k));
+      }
       else
-        lists.push_back( make_pair(lang.tl(data[k].second.getListName()), k) );
+        lists.push_back(make_pair(data[k].second.getListName(), k));
     }
-    else
-      lists.push_back( make_pair(data[k].second.getListName(), k) );
+
+    if (markBuiltIn) {
+      sort(lists.begin() + currentIx, lists.end());
+      currentIx = lists.size();
+    }
+  }
+
+  if (!markBuiltIn) {
+    sort(lists.begin(), lists.end());
   }
 }
 
@@ -2766,6 +3105,83 @@ void MetaListContainer::synchronizeTo(MetaListContainer &dst) const {
 
       dst.listParam[ix] = lp.second;
       dst.listParam[ix].listCode = dstCode;
+    }
+  }
+}
+
+void MetaListContainer::getGeneralResults(vector<DynamicResultRef> &rmAll) {
+  for (int k = 0; k < getNumLists(); k++) {
+    vector<DynamicResultRef> rm;
+    getList(k).getDynamicResults(rm);
+
+    if (!isExternal(k)) {
+      for (size_t j = 0; j < rm.size(); j++) {
+        if (rm[j].res)
+          rm[j].res->setReadOnly();
+      }
+    }
+    rmAll.insert(rmAll.end(), rm.begin(), rm.end());
+  }
+
+  for (auto &res : freeResultModules) {
+    auto dynRes = dynamic_pointer_cast<DynamicResult, GeneralResult>(res.second.ptr);
+    dynRes->retaggable(false);
+    if (dynRes) {
+      rmAll.emplace_back(dynRes, nullptr);
+    }
+  }
+}
+
+
+void MetaListContainer::getFreeResultModules(vector<pair<string, shared_ptr<DynamicResult>>> &res) const {
+  for (auto &r : freeResultModules) {
+    auto dynRes = dynamic_pointer_cast<DynamicResult, GeneralResult>(r.second.ptr);
+    if (dynRes) {
+      res.emplace_back(r.first, dynRes);
+    }
+  }
+}
+
+wstring DynamicResultRef::getAnnotation() const {
+  if (ctr)
+    return ctr->getListName();
+  else
+    return L"";
+}
+
+void MetaListContainer::updateGeneralResult(string tag, const shared_ptr<DynamicResult> &res) {
+  bool changed = false;
+  if (!res) {
+    changed = freeResultModules.count(tag) > 0;
+    freeResultModules.erase(tag);
+  }
+  else {
+    auto rm = freeResultModules.find(tag);
+    if (rm == freeResultModules.end())
+      changed = true;
+    else
+      changed = rm->second.ptr.get() != res.get();
+    assert(tag == res->getTag());
+    freeResultModules.emplace(tag, GeneralResultCtr(tag.c_str(), res->getName(false), res));
+  }
+
+  if (changed && owner)
+    owner->updateChanged();
+}
+
+void MetaList::getAutoComplete(const wstring &w, vector<AutoCompleteRecord> &records) {
+  records.clear();
+  wchar_t s_lc[1024];
+  wcscpy_s(s_lc, w.c_str());
+  CharLowerBuff(s_lc, w.length());
+  wstring tl;
+  for (auto &ts : typeToSymbol) {
+    if (ts.first == lNone || ts.first == lAlignNext)
+      continue;
+    
+    tl = lang.tl(ts.second);
+    if (filterMatchString(ts.second, s_lc) || filterMatchString(tl, s_lc)) {
+      records.emplace_back(tl, ts.second, ts.first);
     }
   }
 }

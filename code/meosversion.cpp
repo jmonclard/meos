@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,43 +24,38 @@
 #include "meos_util.h"
 
 //ABCDEFGHIJKLMNO
-//V2: ABCDEFGHIHJKMN
-//V31: a
-//V33: abcde
-//V35: abcdef
-//V36: abcdef
 int getMeosBuild() {
-  string revision("$Rev: 935 $");
+  string revision("$Rev: 1103 $");
   return 174 + atoi(revision.substr(5, string::npos).c_str());
 }
 
-//ABCDEFGHIJKILMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz
-//V2: abcdefgh
-//V3: abcdefghijklmnopqrstuvxyz
-//V31: abcde
-//V32: abcdefgh
-//V33: abcdefghij
-//V34: abcdfge
 wstring getMeosDate() {
-  wstring date(L"$Date: 2019-11-23 07:05:51 +0200 (JM patch) $");
+  wstring date(L"$Date: 2022-01-02 16:30:00 +0100 (JM) $");
   return date.substr(7,10);
 }
 
 wstring getBuildType() {
-  return L"Update 3"; // No parantheses (...)
+  return L"Beta II"; // No parantheses (...)
 }
 
 wstring getMajorVersion() {
-  return L"3.6";
+  return L"3.8";
 }
 
 wstring getMeosFullVersion() {
   wchar_t bf[256];
+
+#ifdef _WIN64
+  const wchar_t *bits = L"64-bit";
+#else
+  const wchar_t *bits = L"32-bit";
+#endif
+
   wstring maj = getMajorVersion();
   if (getBuildType().empty())
-    swprintf_s(bf, L"Version X#%s.%d, %s", maj.c_str(), getMeosBuild(), getMeosDate().c_str());
+    swprintf_s(bf, L"Version X#%s.%d (%s), %s", maj.c_str(), getMeosBuild(), bits, getMeosDate().c_str());
   else
-    swprintf_s(bf, L"Version X#%s.%d, %s, %s", maj.c_str(), getMeosBuild(), getBuildType().c_str(), getMeosDate().c_str());
+    swprintf_s(bf, L"Version X#%s.%d (%s), %s, %s", maj.c_str(), getMeosBuild(), bits, getBuildType().c_str(), getMeosDate().c_str());
   return bf;
 }
 
@@ -73,37 +68,18 @@ wstring getMeosCompectVersion() {
 
 void getSupporters(vector<wstring> &supp, vector<wstring> &developSupp)
 {
-  supp.emplace_back(L"Sergio Yañez, ABC TRAIL");
-  supp.emplace_back(L"Western Race Services");
-  supp.emplace_back(L"IK Gandvik, Skara");
-  supp.emplace_back(L"IK Stern");
-  supp.emplace_back(L"OK Roslagen");
-  supp.emplace_back(L"TSV Malente");
-  supp.emplace_back(L"Emmaboda Verda OK");
-  supp.emplace_back(L"KOB ATU Košice");
-  supp.emplace_back(L"Gävle OK");
-  supp.emplace_back(L"Kenneth Gattmalm, Jönköpings OK");
-  supp.emplace_back(L"Søllerød OK");
-  supp.emplace_back(L"Bengt Bengtsson");
-  supp.emplace_back(L"OK Landehof");
-  supp.emplace_back(L"OK Orinto");
-  supp.emplace_back(L"Bredaryds SOK");
-  supp.emplace_back(L"Thore Nilsson, Uddevalla OK");
-  supp.emplace_back(L"Timrå SOK");
-  supp.emplace_back(L"Åke Larsson, OK Hedströmmen");
-  supp.emplace_back(L"Avesta OK");
+  supp.emplace_back(L"Tjalve IF");
+  supp.emplace_back(L"Nyköpings Orienteringsklubb");
   supp.emplace_back(L"Motionsorientering Göteborg");
   supp.emplace_back(L"OK Måsen");
   supp.emplace_back(L"IF Thor");
   supp.emplace_back(L"SOS Jindřichův Hradec");
   supp.emplace_back(L"Mats Holmberg, OK Gränsen");
   supp.emplace_back(L"Christoffer Ohlsson, Uddevalla OK");
-  supp.emplace_back(L"KOB ATU Košice");
   supp.emplace_back(L"O-Ringen AB");
   supp.emplace_back(L"Hans Carlstedt, Sävedalens AIK");
   supp.emplace_back(L"IFK Mora OK");
   supp.emplace_back(L"Attunda OK");
-  supp.emplace_back(L"OK Tyr, Karlstad");
   supp.emplace_back(L"Siguldas Takas, Latvia");
   supp.emplace_back(L"Eric Teutsch, Ottawa Orienteering Club, Canada");
   supp.emplace_back(L"Silkeborg OK, Denmark");
@@ -114,13 +90,12 @@ void getSupporters(vector<wstring> &supp, vector<wstring> &developSupp)
   supp.emplace_back(L"OK Tjärnen");
   supp.emplace_back(L"Leksands OK");  
   supp.emplace_back(L"O-Travel");
-  supp.emplace_back(L"Kamil Pipek, OK Lokomotiva Pardubice");
   developSupp.emplace_back(L"KOB Kysak");
-  supp.emplace_back(L"Richard HEYRIES");
   supp.emplace_back(L"Ingemar Carlsson");
   supp.emplace_back(L"Tolereds AIK");
   supp.emplace_back(L"OK Snab");
   supp.emplace_back(L"OK 73");
+  supp.emplace_back(L"Herlufsholm OK");
   supp.emplace_back(L"Helsingborgs SOK");
   supp.emplace_back(L"Sala OK");
   supp.emplace_back(L"OK Roskilde");
@@ -135,13 +110,58 @@ void getSupporters(vector<wstring> &supp, vector<wstring> &developSupp)
   supp.emplace_back(L"JWOC 2019");
   developSupp.emplace_back(L"OK Nackhe");
   supp.emplace_back(L"OK Rodhen");
-  supp.emplace_back(L"HEYRIES");
   developSupp.emplace_back(L"SongTao Wang / Henan Zhixing Exploration Sports Culture Co., Ltd.");
   developSupp.emplace_back(L"Australian and Oceania Orienteering Championships 2019");
   supp.emplace_back(L"Järfälla OK");
   supp.emplace_back(L"TJ Slávia Farmaceut Bratislava");
-  supp.emplace_back(L"OK Tyr, Karlstad");
   supp.emplace_back(L"Magnus Thornell, Surahammars SOK");
-  
+  supp.emplace_back(L"Mariager Fjord OK");
+  supp.emplace_back(L"Nässjö OK");
+  supp.emplace_back(L"Ringsjö OK");
+  supp.emplace_back(L"Big Foot Orienteers");
+  supp.emplace_back(L"Erik Hulthen, Mölndal Outdoor IF");
+  supp.emplace_back(L"Bay Area Orienteering Club");
+  supp.emplace_back(L"Finspångs SOK");
+  supp.emplace_back(L"OK Gorm, Denmark");
+  supp.emplace_back(L"Nyköpings OK");
+  supp.emplace_back(L"Thomas Engberg, VK Uvarna");
+  supp.emplace_back(L"LG Axmalm, Sävedalens AIK");
+  supp.emplace_back(L"Martin Ivarsson");
+  supp.emplace_back(L"Falköpings AIK OK");
+  developSupp.push_back(L"Karlskrona SOK");
+  supp.emplace_back(L"Kristian Toustrup, OK Syd");
+  supp.emplace_back(L"Patrick NG, HKAYP");
+  supp.emplace_back(L"Lars Ove Karlsson, Västerås SOK");
+  supp.emplace_back(L"OK Milan");
+  supp.emplace_back(L"Åke Larsson, OK Hedströmmen");
+  developSupp.push_back(L"Västmanlands OF");
+  supp.emplace_back(L"OK Tyr, Karlstad");
+  developSupp.push_back(L"OK Orion");
+  supp.emplace_back(L"Mjölby OK");
+  supp.emplace_back(L"Malmö OK");
+  supp.emplace_back(L"OK Vilse 87");
+  supp.emplace_back(L"Rehns BK");
+  supp.emplace_back(L"Fredrik Magnusson, Laholms IF");
+  supp.emplace_back(L"KOB ATU Košice");
+  supp.emplace_back(L"Alfta-Ösa OK");
+  supp.emplace_back(L"HEYRIES, ACA Aix en Provence");
+  supp.emplace_back(L"IFK Kiruna");
+  supp.emplace_back(L"Smedjebackens OK");
+  supp.emplace_back(L"Gunnar Persson, Svanesunds GIF");
+  supp.emplace_back(L"Kamil Pipek, OK Lokomotiva Pardubice");
+  supp.emplace_back(L"Køge Orienteringsklub");
+  supp.emplace_back(L"Simrishamns OK");
+  supp.emplace_back(L"OK Fryksdalen");
+  supp.emplace_back(L"Magnus Asplund, Sundbybergs IK");
+  supp.emplace_back(L"Frölunda OL");
+  supp.emplace_back(L"Hjobygdens OK");
+  supp.emplace_back(L"OK Malmia");
+  supp.emplace_back(L"Säterbygdens OK");
+  supp.emplace_back(L"OK Orinto");
+  supp.emplace_back(L"Trosabygdens OK");
+  supp.emplace_back(L"Järla Orientering");
+  supp.emplace_back(L"Hans Wilhelmsson, Säffle OK");
+  supp.emplace_back(L"Cent Vallées Orientation 12 (C.V.O. 12)");
+
   reverse(supp.begin(), supp.end());
 }

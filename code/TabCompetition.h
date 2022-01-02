@@ -1,7 +1,7 @@
 ﻿#pragma once
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 ************************************************************************/
 
 #include "tabbase.h"
-
+#include "gdiconstants.h"
 #include "oFreeImport.h"
 
 class PrefsEditor;
@@ -31,12 +31,6 @@ class ImportFormats;
 class TabCompetition :
   public TabBase
 {
-  enum FlowOperation {
-    FlowContinue,
-    FlowCancel,
-    FlowAborted
-  };
-
   wstring eventorBase;
   wstring iofExportVersion;
   void textSizeControl(gdioutput &gdi) const;
@@ -140,8 +134,11 @@ class TabCompetition :
 
   void listBackups(gdioutput &gdi);
 
-  
-  void checkRentCards(gdioutput &gdi);
+  shared_ptr<GuiHandler> mergeHandler;
+  void mergeCompetition(gdioutput &gdi);
+  wstring mergeFile;
+
+  wstring constructBase(const wstring &r, const wstring &mt) const;
 
 protected:
   void clearCompetitionData();

@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -214,7 +214,7 @@ int TabSpeaker::processButton(gdioutput &gdi, const ButtonInfo &bu)
     gdi.clearPage(false);
     gdi.addButton("Cancel", "Stäng", tabSpeakerCB);
     gdi.dropLine();
-    gdi.addTable(oe->getPunchesTB(), gdi.getCX(), gdi.getCY());
+    gdi.addTable(oFreePunch::getTable(oe), gdi.getCX(), gdi.getCY());
     gdi.refresh();
   }
   else if (bu.id == "Report") {
@@ -268,7 +268,7 @@ int TabSpeaker::processButton(gdioutput &gdi, const ButtonInfo &bu)
     loadPage(gdi);
   }
   else if (bu.id == "LiveResult") {
-    gdioutput *gdi_new = createExtraWindow(uniqueTag("list"), makeDash(L"MeOS - Live"), gdi.getWidth() + 64 + gdi.scaleLength(120));
+    gdioutput *gdi_new = createExtraWindow(uniqueTag("list"), makeDash(L"MeOS - Live"), gdi.getWidth() + 64 + gdi.scaleLength(baseButtonWidth));
        
     gdi_new->clearPage(false);
     gdi_new->addString("", boldLarge, "Liveresultat");
@@ -316,7 +316,7 @@ int TabSpeaker::processButton(gdioutput &gdi, const ButtonInfo &bu)
   else if (bu.id == "Window") {
     oe->setupTimeLineEvents(0);
 
-    gdioutput *gdi_new = createExtraWindow(uniqueTag("speaker"), makeDash(L"MeOS - Speakerstöd"), gdi.getWidth() + 64 + gdi.scaleLength(120));
+    gdioutput *gdi_new = createExtraWindow(uniqueTag("speaker"), makeDash(L"MeOS - Speakerstöd"), gdi.getWidth() + 64 + gdi.scaleLength(baseButtonWidth));
     if (gdi_new) {
       TabSpeaker &tl = dynamic_cast<TabSpeaker &>(*gdi_new->getTabs().get(TSpeakerTab));
       tl.ownWindow = true;
@@ -355,7 +355,7 @@ int TabSpeaker::processButton(gdioutput &gdi, const ButtonInfo &bu)
     if (speakerSettings.empty())
       throw meosException("Inställningarna är ogiltiga");
     for (size_t k = 1; k < speakerSettings.size(); k++) {
-      gdioutput *gdi_new = createExtraWindow(uniqueTag("speaker"), makeDash(L"MeOS - Speakerstöd"), gdi.getWidth() + 64 + gdi.scaleLength(120));
+      gdioutput *gdi_new = createExtraWindow(uniqueTag("speaker"), makeDash(L"MeOS - Speakerstöd"), gdi.getWidth() + 64 + gdi.scaleLength(baseButtonWidth));
       if (gdi_new) {
         TabSpeaker &tl = dynamic_cast<TabSpeaker &>(*gdi_new->getTabs().get(TSpeakerTab));
         tl.ownWindow = true;
@@ -745,7 +745,7 @@ void TabSpeaker::generateControlList(gdioutput &gdi, int classId)
     return;
 
   bool keepLegs = false;
-  if (gdi.hasField("Leg")) {
+  if (gdi.hasWidget("Leg")) {
     DWORD clsSel = 0;
     if (gdi.getData("ClassSelection", clsSel) && clsSel == pc->getId()) {
       gdi.restore("LegSelection", true);
@@ -1102,7 +1102,7 @@ bool TabSpeaker::loadPage(gdioutput &gdi) {
 
     if (getExtraWindows().size() == 1) {
       wstring sf = getSpeakerSettingsFile();
-      if (fileExist(sf.c_str())) {
+      if (fileExists(sf)) {
         if ((cx + db) > basex && (cx + db + bw) >= limitX) {
           cx = basex; db = 0;
           cy += gdi.getButtonHeight() + 4;
@@ -1125,17 +1125,17 @@ bool TabSpeaker::loadPage(gdioutput &gdi) {
 
   if (classId == -1) {
     string btn = "Events";
-    if (gdi.hasField(btn))
+    if (gdi.hasWidget(btn))
       gdi.sendCtrlMessage(btn);
   }
   else if (classId == -2) {
     string btn = "Report";
-    if (gdi.hasField(btn))
+    if (gdi.hasWidget(btn))
       gdi.sendCtrlMessage(btn);
   }
   else if (classId > 0) {
     string btn = "cid" + itos(classId);
-    if (gdi.hasField(btn))
+    if (gdi.hasWidget(btn))
       gdi.sendCtrlMessage(btn);
   }
 
@@ -1265,7 +1265,7 @@ void TabSpeaker::savePriorityClass(gdioutput &gdi) {
     pRunner r = oe->getRunner(runnersToSet[k], 0);
     if (r) {
       int id = runnersToSet[k];
-      if (!gdi.hasField("A" + itos(id))) {
+      if (!gdi.hasWidget("A" + itos(id))) {
         runnersToSet.clear(); //Page not loaded. Abort.
         return;
       }

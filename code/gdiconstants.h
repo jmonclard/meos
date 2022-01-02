@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -38,7 +38,15 @@ enum KeyCommandCode {
   KC_SPEEDUP,
   KC_SLOWDOWN,
   KC_AUTOCOMPLETE,
+  KC_MARKALL,
+  KC_CLEARALL
 };
 
-const int GDI_BUTTON_SPACING = 8;
+/** Enum used to stack GUI command control, "command line wizard" */
+enum FlowOperation {
+  FlowContinue,
+  FlowCancel,
+  FlowAborted
+};
+
 #endif

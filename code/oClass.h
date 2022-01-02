@@ -1,17 +1,7 @@
-﻿// oClass.h: interface for the oClass class.
-//
-//////////////////////////////////////////////////////////////////////
-
-#if !defined(AFX_OCLASS_H__63E948E3_3C06_4404_8E72_2185582FF30F__INCLUDED_)
-#define AFX_OCLASS_H__63E948E3_3C06_4404_8E72_2185582FF30F__INCLUDED_
-
-#if _MSC_VER > 1000
-#pragma once
-#endif // _MSC_VER > 1000
-
+﻿#pragma once
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -39,6 +29,7 @@
 class oClass;
 typedef oClass* pClass;
 class oDataInterface;
+class GeneralResult;
 
 const int MaxClassId = 1000000;
 
@@ -67,10 +58,11 @@ enum { nLegTypes = LT_max };
 
 
 enum BibMode {
-  BibSame,
-  BibAdd,
-  BibFree,
-  BibLeg,
+  BibUndefined = -1,
+  BibSame = 0,
+  BibAdd = 1,
+  BibFree = 2,
+  BibLeg = 3,
 };
 
 enum AutoBibType {
@@ -151,7 +143,8 @@ class Table;
 class oClass : public oBase
 {
 public:
-  enum ClassStatus {Normal, Invalid, InvalidRefund};
+  enum class ClassStatus {Normal, Invalid, InvalidRefund};
+  enum class AllowRecompute {Yes, No, NoUseOld };
 
   static void getSplitMethods(vector< pair<wstring, size_t> > &methods);
   static void getSeedingMethods(vector< pair<wstring, size_t> > &methods);
@@ -166,16 +159,88 @@ protected:
   //First: best time on leg
   //Second: Total leader time (total leader)
   struct LeaderInfo {
-    LeaderInfo() {bestTimeOnLeg = 0; totalLeaderTime = 0; inputTime = 0; totalLeaderTimeInput = 0;}
-    void reset() {bestTimeOnLeg = 0; totalLeaderTime = 0; inputTime = 0; totalLeaderTimeInput = 0;}
+  private:
     int bestTimeOnLeg;
+    int bestTimeOnLegComputed; // Computed be default result module
+    
     int totalLeaderTime;
+    int totalLeaderTimeComputed; // Computed be default result module
+
     int totalLeaderTimeInput; //Team total including input
+    int totalLeaderTimeInputComputed; //Team total including input
+
     int inputTime;
+
+    bool complete = false;
+  public:
+    LeaderInfo() {
+      reset();
+    }
+
+    void reset() {
+      bestTimeOnLeg = -1;
+      bestTimeOnLegComputed = -1;
+
+      totalLeaderTime = -1;
+      totalLeaderTimeComputed = -1;
+
+      inputTime = -1;
+      totalLeaderTimeInput = -1;
+      totalLeaderTimeInputComputed = -1;
+      complete = false;
+    }
+
+    void updateFrom(const LeaderInfo& i) {
+      if (i.complete) {
+        if (i.bestTimeOnLeg != -1)
+          bestTimeOnLeg = i.bestTimeOnLeg;
+        if (i.bestTimeOnLegComputed != -1)
+          bestTimeOnLegComputed = i.bestTimeOnLegComputed;
+        if (i.totalLeaderTime != -1)
+          totalLeaderTime = i.totalLeaderTime;
+        if (i.totalLeaderTimeComputed != -1)
+          totalLeaderTimeComputed = i.totalLeaderTimeComputed;
+        if (i.inputTime != -1)
+          inputTime = i.inputTime;
+        if (i.totalLeaderTimeInput != -1)
+          totalLeaderTimeInput = i.totalLeaderTimeInput;
+        if (i.totalLeaderTimeInputComputed != -1)
+          totalLeaderTimeInputComputed = i.totalLeaderTimeInputComputed;
+      }
+    }
+    
+    enum class Type {
+      Leg,
+      Total,
+      TotalInput,
+      Input,
+    };
+
+    int getInputTime() const {
+      return inputTime;
+    }
+    
+    void resetComputed(Type t);    
+    bool update(int rt, Type t);
+    bool updateComputed(int rt, Type t);
+    int getLeader(Type t, bool computed) const;
+
+    void setComplete() {
+      complete = true;
+    }
+
+    // For non-team classes, input is the same as total input and computed total input
+    void copyInputToTotalInput();
   };
 
-  vector<LeaderInfo> tLeaderTime;
-  map<int, int> tBestTimePerCourse;
+  void updateLeaderTimes() const;
+
+  LeaderInfo &getLeaderInfo(AllowRecompute recompute, int leg) const;
+
+  mutable int leaderTimeVersion = -1;
+  mutable vector<LeaderInfo> tLeaderTime;
+  mutable vector<LeaderInfo> tLeaderTimeOld;
+  mutable map<int, int> tBestTimePerCourse;
 
   int tSplitRevision;
   map<int, vector<int> > tSplitAnalysisData;
@@ -238,10 +303,10 @@ protected:
   void markSQLChanged(int leg, int control);
 
   void addTableRow(Table &table) const;
-  bool inputData(int id, const wstring &input, int inputId,
-                        wstring &output, bool noUpdate);
+  pair<int, bool> inputData(int id, const wstring &input, int inputId,
+                        wstring &output, bool noUpdate) override;
 
-  void fillInput(int id, vector< pair<wstring, size_t> > &elements, size_t &selected);
+  void fillInput(int id, vector<pair<wstring, size_t>> &elements, size_t &selected) override;
 
   void exportIOFStart(xmlparser &xml);
 
@@ -256,7 +321,7 @@ protected:
 
   /** Map to correct leg number for diff class/runner class (for example qual/final)*/
   int mapLeg(int inputLeg) const {
-    if (inputLeg > 0 && legInfo.size() == 1)
+    if (inputLeg > 0 && legInfo.size() <= 1)
       return 0; // The case with different class for team/runner. Leg is an index in another class.
     return inputLeg;
   }
@@ -299,6 +364,16 @@ protected:
 
   void configureInstance(int instance, bool allowCreation) const;
 public:
+
+  static const shared_ptr<Table> &getTable(oEvent *oe);
+
+  enum TransferFlags {
+    FlagManualName = 1,
+    FlagManualFees = 2,
+  };
+
+  bool hasFlag(TransferFlags flag) const;
+  void setFlag(TransferFlags flag, bool state);
 
   /** The master class in a qualification/final scheme. */
   const pClass getParentClass() const { return parentClass; }
@@ -398,6 +473,7 @@ public:
   const pClass getVirtualClass(int instance) const;
 
   ClassStatus getClassStatus() const;
+  static void fillClassStatus(vector<pair<wstring, wstring>> &statusClass);
 
   ClassMetaType interpretClassType() const;
 
@@ -432,11 +508,11 @@ public:
 
   void getStatistics(const set<int> &feeLock, int &entries, int &started) const;
 
-  int getBestInputTime(int leg) const;
-  int getBestLegTime(int leg) const;
-  int getBestTimeCourse(int courseId) const;
+  int getBestInputTime(AllowRecompute recompute, int leg) const;
+  int getBestLegTime(AllowRecompute recompute, int leg, bool computedTime) const;
+  int getBestTimeCourse(AllowRecompute recompute, int courseId) const;
 
-  int getTotalLegLeaderTime(int leg, bool includeInput) const;
+  int getTotalLegLeaderTime(AllowRecompute recompute, int leg, bool computedTime, bool includeInput) const;
 
   wstring getInfo() const;
   // Returns true if the class has a pool of courses
@@ -448,7 +524,8 @@ public:
   // Update changed course pool
   void updateChangedCoursePool();
 
-  void resetLeaderTime();
+  /** Reset cache of leader times */
+  void resetLeaderTime() const;
 
   ClassType getClassType() const;
 
@@ -565,7 +642,7 @@ public:
   int getNumberMaps(bool rawAttribute = false) const;
 
   const wstring &getName() const {return Name;}
-  void setName(const wstring &name);
+  void setName(const wstring &name, bool manualSet);
 
   void Set(const xmlobject *xo);
   bool Write(xmlparser &xml);
@@ -642,14 +719,19 @@ public:
   void getParallelCourseGroup(int leg, int startNo, vector< pair<int, pCourse> > &group) const;
   // Returns 0 for no parallel selection (= normal mode)
   pCourse selectParallelCourse(const oRunner &r, const SICard &sic);
-
   void getParallelRange(int leg, int &parLegRangeMin, int &parLegRangeMax) const;
-
   bool hasAnyCourse(const set<int> &crsId) const;
+
+  GeneralResult *getResultModule() const;
+  void setResultModule(const string &tag);
+  const string &getResultModuleTag() const;
+
+  void merge(const oBase &input, const oBase *base) final;
 
   oClass(oEvent *poe);
   oClass(oEvent *poe, int id);
   virtual ~oClass();
+  void clearDuplicate();
 
   friend class oAbstractRunner;
   friend class oEvent;
@@ -662,5 +744,3 @@ public:
 static const oClass::DrawSpecified DrawKeys[4] = { oClass::DrawSpecified::FixedTime,
                                                    oClass::DrawSpecified::Vacant, 
                                                    oClass::DrawSpecified::Extra };
-
-#endif // !defined(AFX_OCLASS_H__63E948E3_3C06_4404_8E72_2185582FF30F__INCLUDED_)

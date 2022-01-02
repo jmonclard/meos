@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2019 Melin Software HB
+    Copyright (C) 2009-2021 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -72,7 +72,7 @@ bool oClub::write(xmlparser &xml)
 
   xml.startTag("Club");
   xml.write("Id", Id);
-  xml.write("Updated", Modified.getStamp());
+  xml.write("Updated", getStamp());
   xml.write("Name", name);
   for (size_t k=0;k<altNames.size(); k++)
     xml.write("AltName", altNames[k]);
@@ -251,7 +251,7 @@ pClub oEvent::addClub(const oClub &oc)
     return clubIdIndex[oc.Id];
 
   Clubs.push_back(oc);
-  Clubs.back().addToEvent();
+  Clubs.back().addToEvent(this, &oc);
 
   if (!oc.existInDB())
     Clubs.back().synchronize();
@@ -290,28 +290,24 @@ void oClub::buildTableCol(oEvent *oe, Table *table) {
 }
 
 #define TB_CLUBS "clubs"
-Table *oEvent::getClubsTB()//Table mode
-{
-  if (tables.count("club") == 0) {
-    Table *table=new Table(this, 20, L"Klubbar", TB_CLUBS);
+const shared_ptr<Table> &oClub::getTable(oEvent *oe) {
+  if (!oe->hasTable("club")) {
+    auto table = make_shared<Table>(oe, 20, L"Klubbar", TB_CLUBS);
 
     table->addColumn("Id", 70, true, true);
     table->addColumn("Ändrad", 70, false);
 
     table->addColumn("Namn", 200, false);
-    oe->oClubData->buildTableCol(table);
+    oe->oClubData->buildTableCol(table.get());
 
     table->addColumn("Deltagare", 70, true);
     table->addColumn("Avgift", 70, true);
     table->addColumn("Betalat", 70, true);
 
-    tables["club"] = table;
-    table->addOwnership();
+    oe->setTable("club", table);
   }
 
-  tables["club"]->update();
-  return tables["club"];
-
+  return oe->getTable("club");
 }
 
 void oEvent::generateClubTableData(Table &table, oClub *addClub)
@@ -357,8 +353,8 @@ void oClub::addTableRow(Table &table) const {
   }
 }
 
-bool oClub::inputData(int id, const wstring &input,
-                        int inputId, wstring &output, bool noUpdate)
+pair<int, bool> oClub::inputData(int id, const wstring &input,
+                                 int inputId, wstring &output, bool noUpdate)
 {
   synchronize(false);
 
@@ -371,17 +367,16 @@ bool oClub::inputData(int id, const wstring &input,
       setName(input);
       synchronize();
       output = getName();
-      return true;
     break;
   }
 
-  return false;
+  return make_pair(0, false);
 }
 
 void oClub::fillInput(int id, vector< pair<wstring, size_t> > &out, size_t &selected)
 {
   if (id>1000) {
-    oe->oClubData->fillInput(oData, id, 0, out, selected);
+    oe->oClubData->fillInput(this, id, 0, out, selected);
     return;
   }
 }
@@ -513,23 +508,23 @@ void oClub::addRunnerInvoiceLine(const pRunner r, bool inTeam,
 
       if (type == oClassIndividRelay || type == oClassRelay) {
         int leg = r->getLegNumber();
-        if (t->getLegStatus(leg, false) == StatusOK)
-          ts =  t->getLegPlaceS(leg, false)+ L" (" + r->getRunningTimeS() + L")";
+        if (t->getLegStatus(leg, true, false) == StatusOK)
+          ts =  t->getLegPlaceS(leg, false)+ L" (" + r->getRunningTimeS(true) + L")";
         else
-          ts =  t->getLegStatusS(leg, false)+ L" (" + r->getRunningTimeS() +L")";
+          ts =  t->getLegStatusS(leg, true, false)+ L" (" + r->getRunningTimeS(true) +L")";
       }
       else
-        ts =  r->getPrintPlaceS(true)+ L" (" + r->getRunningTimeS() + L")";
+        ts =  r->getPrintPlaceS(true)+ L" (" + r->getRunningTimeS(true) + L")";
     }
     else
-      ts =  r->getStatusS(true);
+      ts =  r->getStatusS(true, true);
   }
   else {
     if (r->getTotalStatus()==StatusOK) {
       ts =  r->getPrintTotalPlaceS(true) + L" (" + r->getTotalRunningTimeS() + L")";
     }
     else if (r->getTotalStatus()!=StatusNotCompetiting)
-      ts =  r->getStatusS(true);
+      ts =  r->getStatusS(true, true);
     else {
       ts = r->getInputStatusS();
     }
@@ -545,7 +540,7 @@ void oClub::addRunnerInvoiceLine(const pRunner r, bool inTeam,
   if (res != definedPayModes.end())
     payMode = ", " + res->second;
   */
-  if (r->getClassRef(false) && r->getClassRef(false)->getClassStatus() == oClass::InvalidRefund) {
+  if (r->getClassRef(false) && r->getClassRef(false)->getClassStatus() == oClass::ClassStatus::InvalidRefund) {
     fee = 0;
     card = 0;
   }
@@ -585,14 +580,14 @@ void oClub::addTeamInvoiceLine(const pTeam t, const map<int, wstring> &definedPa
     ts = L"-";
   else  {
     if (t->getStatus()==StatusOK) {
-      ts =  t->getPrintPlaceS(true) + L" (" + t->getRunningTimeS() + L")";
+      ts =  t->getPrintPlaceS(true) + L" (" + t->getRunningTimeS(true) + L")";
     }
     else
-      ts =  t->getStatusS(true);
+      ts =  t->getStatusS(true, true);
   }
 
 
-  if (t->getClassRef(false) && t->getClassRef(false)->getClassStatus() == oClass::InvalidRefund) {
+  if (t->getClassRef(false) && t->getClassRef(false)->getClassStatus() == oClass::ClassStatus::InvalidRefund) {
     fee = 0;
   }
 
@@ -661,11 +656,14 @@ void oClub::generateInvoice(gdioutput &gdi, int &toPay, int &hasPaid,
   data.resPos = gdi.scaleLength(550);
 
   gdi.addString("", ys, xs+data.adrPos, boldHuge, "FAKTURA");
-  if (number>0)
-    gdi.addStringUT(ys+lh*3, xs+data.adrPos, fontMedium, lang.tl("Faktura nr")+ L": " + itow(number));
+  if (number > 0) {
+    gdi.addStringUT(ys + lh * 3, xs + data.adrPos, fontMedium, lang.tl("Faktura nr") + L": " + itow(number));
+    gdi.addStringUT(ys + lh * 4, xs + data.adrPos, fontMedium, getInvoiceDate(*oe));
+  }
+
   int &yp = data.yp;
 
-  yp = ys+lh;
+  yp = ys+lh * 2;
   wstring ostreet = oe->getDI().getString("Street");
   wstring oaddress = oe->getDI().getString("Address");
   wstring oco = oe->getDI().getString("CareOf");
@@ -689,7 +687,7 @@ void oClub::generateInvoice(gdioutput &gdi, int &toPay, int &hasPaid,
   wstring city =  getDCI().getString("ZIP") + L" " + getDCI().getString("City");
   wstring country =  getDCI().getString("Country");
 
-  int ayp = ys + 122;
+  int ayp = ys + gdi.scaleLength(122);
 
   const int absX = oe->getPropertyInt("addressxpos", 125);
   int absY = oe->getPropertyInt("addressypos", 50);
@@ -711,7 +709,7 @@ void oClub::generateInvoice(gdioutput &gdi, int &toPay, int &hasPaid,
   if (!country.empty())
     gdi.addStringUT(ayp, xs+data.adrPos, fontMedium, country).setAbsPrintPos(absX,absY), ayp+=lh, absY+=absYL;
 
-  yp = ayp+30;
+  yp = ayp+gdi.scaleLength(36);
 
   gdi.addString("", yp, xs, boldSmall, "Deltagare");
   gdi.addString("", yp, xs+data.clsPos, boldSmall, "Klass");
@@ -817,7 +815,7 @@ void oEvent::printInvoices(gdioutput &gdi, InvoicePrintType type,
 
   oClub::assignInvoiceNumber(*this, false);
   oClubList::iterator it;
-  oe->calculateTeamResults(false);
+  oe->calculateTeamResults(set<int>(), ResultType::ClassResult);
   oe->sortTeams(ClassStartTime, 0, true);
   oe->calculateResults(set<int>(), ResultType::ClassResult);
   oe->sortRunners(ClassStartTime);
@@ -1015,7 +1013,7 @@ void oEvent::setupClubInfoData() {
       int id = r.Club->Id;
       ++runners[id];
       oDataConstInterface di = r.getDCI();
-      bool skip = r.Class && r.Class->getClassStatus() == oClass::InvalidRefund;
+      bool skip = r.Class && r.Class->getClassStatus() == oClass::ClassStatus::InvalidRefund;
 
       if (!skip) {
         int cardFee = di.getInt("CardFee");
@@ -1035,7 +1033,7 @@ void oEvent::setupClubInfoData() {
     if (t.Club) {
       int id = t.Club->Id;
       oDataConstInterface di = t.getDCI();
-      bool skip = t.Class && t.Class->getClassStatus() == oClass::InvalidRefund;
+      bool skip = t.Class && t.Class->getClassStatus() == oClass::ClassStatus::InvalidRefund;
 
       if (!skip) {
         fee[id] += di.getInt("Fee");
@@ -1146,10 +1144,33 @@ int oClub::getFirstInvoiceNumber(oEvent &oe) {
 void oClub::changedObject() {
   if (oe)
     oe->globalModification = true;
+  oe->sqlClubs.changed = true;
 }
 
 bool oClub::operator<(const oClub &c) const {
   return CompareString(LOCALE_USER_DEFAULT, 0,
                       name.c_str(), name.length(),
                       c.name.c_str(), c.name.length()) == CSTR_LESS_THAN;
+}
+
+wstring oClub::getInvoiceDate(oEvent &oe) {
+  wstring invoiceDate = oe.getDCI().getDate("InvoiceDate");
+  int invoiceDateI = oe.getDCI().getInt("InvoiceDate");
+  if (invoiceDateI == 0) {
+    invoiceDate = getLocalDate();
+    setInvoiceDate(oe, invoiceDate);
+  }
+  return invoiceDate;
+}
+
+void oClub::setInvoiceDate(oEvent &oe, const wstring &id) {
+  oe.getDI().setDate("InvoiceDate", id);
+}
+
+int oClub::getStartGroup() const {
+  return getDCI().getInt("StartGroup");
+}
+
+void oClub::setStartGroup(int sg) {
+  getDI().setInt("StartGroup", sg);
 }
