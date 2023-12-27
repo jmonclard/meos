@@ -473,7 +473,11 @@ void InfoBaseCompetitor::serialize(xmlbuffer &xml, bool diffOnly, int course) co
     prop.emplace_back("nat", nationality);
   
   prop.emplace_back("pts", itow(rogainingpoints));
+  prop.emplace_back("totalpts", itow(totalrogainingpoints));
   prop.emplace_back("ptsgr", itow(rogainingpointsgross));
+  prop.emplace_back("computedpts", itow(computedrogainingpoints));
+  prop.emplace_back("computedtotalpts", itow(computedtotalrogainingpoints));
+  prop.emplace_back("computedptsgr", itow(computedrogainingpointsgross));
 
   xml.write("base", prop, name);
 }
@@ -553,15 +557,39 @@ bool InfoBaseCompetitor::synchronizeBase(oAbstractRunner &bc) {
     }
   }
 
-  int newrogainingpoints = bc.getRogainingPoints(false,false); //TODO look for correct parameters values
+  int newrogainingpoints = bc.getRogainingPoints(false,false); // (computed, total)
   if (rogainingpoints != newrogainingpoints) {
     rogainingpoints = newrogainingpoints;
     ch = true;
   }
 
-  int newrogainingpointsgross = bc.getRogainingPointsGross(false); //TODO look for correct parameter value
+  int newtotalrogainingpoints = bc.getRogainingPoints(false, true);
+  if (totalrogainingpoints != newtotalrogainingpoints) {
+    totalrogainingpoints = newtotalrogainingpoints;
+    ch = true;
+  }
+
+  int newrogainingpointsgross = bc.getRogainingPointsGross(false); //(computed)
   if (rogainingpointsgross != newrogainingpointsgross) {
     rogainingpointsgross = newrogainingpointsgross;
+    ch = true;
+  }
+
+  int newcomputedtotalrogainingpoints = bc.getRogainingPoints(true, true);
+  if (computedtotalrogainingpoints != newcomputedtotalrogainingpoints) {
+    computedtotalrogainingpoints = newcomputedtotalrogainingpoints;
+    ch = true;
+  }
+
+  int newcomputedrogainingpoints = bc.getRogainingPoints(true, false);
+  if (computedrogainingpoints != newcomputedrogainingpoints) {
+    computedrogainingpoints = newcomputedrogainingpoints;
+    ch = true;
+  }
+
+  int newcomputedrogainingpointsgross = bc.getRogainingPointsGross(true);
+  if (computedrogainingpointsgross != newcomputedrogainingpointsgross) {
+    computedrogainingpointsgross = newcomputedrogainingpointsgross;
     ch = true;
   }
 

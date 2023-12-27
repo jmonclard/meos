@@ -174,7 +174,11 @@ class InfoBaseCompetitor : public InfoBase {
     wstring bib;
     wstring nationality;
     int rogainingpoints;
+    int totalrogainingpoints;
     int rogainingpointsgross;
+    int computedrogainingpoints;
+    int computedtotalrogainingpoints;
+    int computedrogainingpointsgross;
     void serialize(xmlbuffer &xml, bool diffOnly, int course) const;
     bool synchronizeBase(oAbstractRunner &bc);
 public:
