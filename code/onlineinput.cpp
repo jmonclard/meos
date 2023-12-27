@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -100,22 +100,26 @@ int OnlineInput::processButton(gdioutput &gdi, ButtonInfo &bi) {
   }
   else if (bi.id == "UseUnitId") {
     useUnitId = gdi.isChecked(bi.id);
-    if (useUnitId)
-      gdi.setTextTranslate("CmpID_label", L"Enhetens ID-nummer (MAC):", true);
-    else
-      gdi.setTextTranslate("CmpID_label", L"Tävlingens ID-nummer:", true);
+    updateLabel(gdi);
   }
 
   return 0;
 }
 
+void OnlineInput::updateLabel(gdioutput& gdi)
+{
+  if (useUnitId)
+    gdi.setTextTranslate("CmpID_label", L"Enhetens ID-nummer (MAC):", true);
+  else
+    gdi.setTextTranslate("CmpID_label", L"Tävlingens ID-nummer:", true);
+}
+
 void OnlineInput::fillMappings(gdioutput &gdi) const{
   gdi.clearList("Mappings");
   for (map<int, oPunch::SpecialPunch>::const_iterator it = specialPunches.begin(); it != specialPunches.end(); ++it) {
-    gdi.addItem("Mappings", itow(it->first) + L" -> " + oPunch::getType(it->second), it->first);
+    gdi.addItem("Mappings", itow(it->first) + L" \u21A6 " + oPunch::getType(it->second), it->first);
   }
 }
-
 
 void OnlineInput::settings(gdioutput &gdi, oEvent &oe, State state) {
   int iv = interval;
@@ -133,14 +137,28 @@ void OnlineInput::settings(gdioutput &gdi, oEvent &oe, State state) {
 
   gdi.addInput("URL", url, 40, 0, L"URL:", L"Till exempel X#http://www.input.org/online.php");
   gdi.addCheckbox("UseROC", "Använd ROC-protokoll", OnlineCB, useROCProtocol).setExtra(getId());
-  gdi.addCheckbox("UseUnitId", "Använd enhets-id istället för tävlings-id", OnlineCB, useROCProtocol & useUnitId).setExtra(getId());
+  gdi.addCheckbox("UseUnitId", "Använd enhets-id istället för tävlings-id", OnlineCB, useROCProtocol && useUnitId).setExtra(getId());
   gdi.setInputStatus("UseUnitId", useROCProtocol);
-  gdi.addInput("CmpID", itow(cmpId), 10, 0, L"Tävlingens ID-nummer:");
+
+  if (useROCProtocol && useUnitId)
+    gdi.addInput("CmpID", unitId, 10, 0, L"Enhetens ID-nummer (MAC):");
+  else
+    gdi.addInput("CmpID", itow(cmpId), 10, 0, L"Tävlingens ID-nummer:");
 
   gdi.dropLine(1);
-
   gdi.addString("", boldText, "Kontrollmappning");
   gdi.dropLine(0.5);
+
+  controlMappingView(gdi, OnlineCB, getId());
+  fillMappings(gdi);
+
+  gdi.setCY(gdi.getHeight());
+  gdi.popX();
+  gdi.addString("", 10, "help:onlineinput");
+}
+
+void OnlineInput::controlMappingView(gdioutput& gdi, GUICALLBACK cb, int widgetId)
+{
   gdi.fillRight();
   gdi.addInput("Code", L"", 4, 0, L"Kod:");
   gdi.addSelection("Function", 80, 200, 0, L"Funktion:");
@@ -148,17 +166,12 @@ void OnlineInput::settings(gdioutput &gdi, oEvent &oe, State state) {
   gdi.addItem("Function", lang.tl("Start"), oPunch::PunchStart);
   gdi.addItem("Function", lang.tl("Check"), oPunch::PunchCheck);
   gdi.dropLine();
-  gdi.addButton("SaveMapping", "Lägg till", OnlineCB).setExtra(getId());
+  gdi.addButton("SaveMapping", "Lägg till", cb).setExtra(widgetId);
   gdi.popX();
   gdi.dropLine(2);
-  gdi.addListBox("Mappings", 150, 100, 0, L"Definierade mappningar:", L"", true);
+  gdi.addListBox("Mappings", 150, 150, 0, L"Definierade mappningar:", L"", true);
   gdi.dropLine();
-  gdi.addButton("RemoveMapping", "Ta bort", OnlineCB).setExtra(getId());
-  fillMappings(gdi);
-
-  gdi.setCY(gdi.getHeight());
-  gdi.popX();
-  gdi.addString("", 10, "help:onlineinput");
+  gdi.addButton("RemoveMapping", "Ta bort", cb).setExtra(widgetId);
 }
 
 void OnlineInput::save(oEvent &oe, gdioutput &gdi, bool doProcess) {
@@ -235,7 +248,7 @@ void OnlineInput::loadMachine(oEvent &oe, const wstring &name) {
   auto *cnt = oe.getMachineContainer().get(getTypeString(), name);
   if (!cnt)
     return;
-
+  AutoMachine::loadMachine(oe, name);
   url = cnt->getString("url");
   cmpId = cnt->getInt("cmpId");
   unitId = cnt->getString("unitId");
@@ -246,7 +259,7 @@ void OnlineInput::loadMachine(oEvent &oe, const wstring &name) {
 
   specialPunches.clear();
   vector<int> pm = cnt->getVectorInt("map");
-  for (int j = 0; j + 1 < pm.size(); j+=2) {
+  for (size_t j = 0; j + 1 < pm.size(); j+=2) {
     specialPunches[pm[j]] = oPunch::SpecialPunch(pm[j + 1]);
   }
 }
@@ -338,13 +351,14 @@ void OnlineInput::processPunches(oEvent &oe, const xmlList &punches) {
     wstring startno;
     punches[k].getObjectString("sno", startno);
 
+    int originalCode = code;
     if (specialPunches.count(code))
       code = specialPunches[code];
 
     pRunner r = 0;
 
     int card = punches[k].getObjectInt("card");
-    int time = punches[k].getObjectInt("time") / 10;
+    int time = punches[k].getObjectInt("time") / (10 / timeConstSecond);
     time = oe.getRelativeTime(formatTimeHMS(time));
 
     if (startno.length() > 0)
@@ -364,7 +378,7 @@ void OnlineInput::processPunches(oEvent &oe, const xmlList &punches) {
       time = 0;
       addInfo(L"Ogiltig tid");
     }
-    oe.addFreePunch(time, code, card, true);
+    oe.addFreePunch(time, code, originalCode, card, true);
 
     addInfo(L"Löpare: X, kontroll: Y, kl Z#" + rname + L"#" + oPunch::getType(code) + L"#" +  oe.getAbsTime(time));
   }
@@ -380,6 +394,7 @@ void OnlineInput::processPunches(oEvent &oe, list< vector<wstring> > &rocData) {
       wstring timeS = line[3].substr(11);
       int time = oe.getRelativeTime(timeS);
 
+      int originalCode = code;
       if (specialPunches.count(code))
         code = specialPunches[code];
 
@@ -398,7 +413,7 @@ void OnlineInput::processPunches(oEvent &oe, list< vector<wstring> > &rocData) {
         time = 0;
         addInfo(L"Ogiltig tid");
       }
-      oe.addFreePunch(time, code, card, true);
+      oe.addFreePunch(time, code, originalCode, card, true);
 
       lastImportedId = max(lastImportedId, punchId);
 
@@ -414,14 +429,14 @@ void OnlineInput::processCards(gdioutput &gdi, oEvent &oe, const xmlList &cards)
     SICard sic(ConvertedTimeStatus::Hour24);
     sic.CardNumber = cards[k].getObjectInt("number");
     if (cards[k].getObject("finish"))
-      sic.FinishPunch.Time = cards[k].getObject("finish").getObjectInt("time") / 10;
+      sic.FinishPunch.Time = cards[k].getObject("finish").getObjectInt("time") / (10 / timeConstSecond);
     if (cards[k].getObject("start"))
-      sic.StartPunch.Time = cards[k].getObject("start").getObjectInt("time") / 10;
+      sic.StartPunch.Time = cards[k].getObject("start").getObjectInt("time") / (10 / timeConstSecond);
     xmlList punches;
     cards[k].getObjects("p", punches);
     for (size_t j = 0; j < punches.size(); j++) {
       sic.Punch[j].Code = punches[j].getObjectInt("code");
-      sic.Punch[j].Time = punches[j].getObjectInt("time") / 10;
+      sic.Punch[j].Time = punches[j].getObjectInt("time") / (10 / timeConstSecond);
     }
     sic.nPunch = punches.size();
     TabSI::getSI(gdi).addCard(sic);
@@ -463,9 +478,9 @@ void OnlineInput::processEntries(oEvent &oe, const xmlList &entries) {
     bool paid = entry.getObjectBool("paid");
 
     xmlobject xname = entry.getObject("name");
-    int birthyear = 0;
+    wstring birthyear = 0;
     if (xname) {
-      birthyear = xname.getObjectInt("birthyear");
+      xname.getObjectString("birthyear", birthyear);
     }
 
     wstring name;
@@ -513,7 +528,7 @@ void OnlineInput::processEntries(oEvent &oe, const xmlList &entries) {
     else {
       r->setName(name, false);
       r->setClub(club);
-      r->setBirthYear(birthyear);
+      r->setBirthDate(birthyear);
       r->setCardNo(cardNo, false, false);
       r->setClassId(cls->getId(), true);
     }

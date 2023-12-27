@@ -2,7 +2,7 @@
 
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -29,8 +29,8 @@ struct SpeakerString {
   wstring str;
   int format;
   bool hasTimer;
-  int timer;
-  int timeout;
+  int timer; // Timer time (in normal time units)
+  int timeout; // Timeout time (in seconds)
   string moveKey;
   GDICOLOR color;
   SpeakerString() : format(0), hasTimer(false), timer(0), timeout(NOTIMEOUT), color(colorDefault) {}
@@ -84,6 +84,9 @@ public:
 
   RunnerStatus status;
   RunnerStatus finishStatus;
+
+  bool hasResult() const { return status == StatusOK || status == StatusUnknown && runningTime.time > 0; }
+  bool isIncomming() const { return status == StatusUnknown && runningTime.time <= 0; }
 
   RunningTime runningTime;
   RunningTime runningTimeLeg;

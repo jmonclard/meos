@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -32,16 +32,25 @@ class BaseInfo
 protected:
   void *extra;
   GuiHandler *handler;
+  shared_ptr<GuiHandler> managedHandler;
   bool dataString;
 public:
 
+  bool matchExtra(int requireExtraMatch) const {
+    return requireExtraMatch == -1 || requireExtraMatch == getExtraInt();
+  }
+
   bool hasEventHandler() const {
-    return handler != 0;
+    return handler != 0 || managedHandler;
   }
 
   bool handleEvent(gdioutput &gdi, GuiEventType type) {
     if (handler) {
       handler->handle(gdi, *this, type);
+      return true;
+    }
+    else if (managedHandler) {
+      managedHandler->handle(gdi, *this, type);
       return true;
     }
     return false;
@@ -72,7 +81,11 @@ public:
 
   GuiHandler &getHandler() const;
   BaseInfo &setHandler(const GuiHandler *h) {handler = const_cast<GuiHandler *>(h); return *this;}
-
+  BaseInfo &setHandler(const shared_ptr<GuiHandler> &h) { managedHandler = h; return *this; }
+  void clearHandler() {
+    handler = nullptr;
+    managedHandler.reset();
+  }
 };
 
 class RestoreInfo : public BaseInfo
@@ -98,6 +111,12 @@ public:
 
   GUICALLBACK onClear;
   GUICALLBACK postClear;
+
+  set<string> restorePoints;
+
+  bool operator<(const RestoreInfo &r) const {
+    return nLBI < r.nLBI || nBI < r.nBI || nII < r.nII || nTL < r.nTL || nRect < r.nRect || nData < r.nData;
+  }
 
   HWND getControlWindow() const {throw std::exception("Unsupported");}
 };
@@ -168,8 +187,8 @@ public:
   wstring text;
   wstring font;
 
-  int xp;
-  int yp;
+  int xp = -1;
+  int yp = -1;
 
   int format;
   DWORD color;
@@ -179,8 +198,8 @@ public:
   int absPrintY;
 
   bool hasTimer;
-  DWORD zeroTime;
-  DWORD timeOut;
+  DWORD zeroTime = -1;
+  DWORD timeOut = 0;
 
   bool hasCapture;
   GUICALLBACK callBack;
@@ -328,10 +347,10 @@ private:
   bool isEditControl;
   bool writeLock;
   wstring original;
-  int originalIdx;
+  size_t originalIdx;
   bool ignoreCheck; // True if changed-state should be ignored
 
-  map<int, int> data2Index;
+  map<size_t, int> data2Index;
 
   // Synchronize with other list box
   WNDPROC originalProc;
@@ -378,11 +397,12 @@ private:
   DWORD dataInt;
   wstring dataString;
   gdioutput *parent;
-  TimerInfo(gdioutput *gdi, GUICALLBACK cb) : parent(gdi), callBack(cb), setWnd(0), timerId(++globalTimerId) {}
   HWND setWnd;
 public:
   ~TimerInfo();
-
+  TimerInfo(gdioutput* gdi, GUICALLBACK cb) : parent(gdi), callBack(cb), setWnd(0), timerId(++globalTimerId) {}
+  TimerInfo(const TimerInfo&) = delete;
+  TimerInfo& operator=(const TimerInfo&) = delete;
   int getId() const { return timerId; }
   BaseInfo &setExtra(const wchar_t *e) {return BaseInfo::setExtra(e);}
   BaseInfo &setExtra(int e) {return BaseInfo::setExtra(e);}
@@ -428,7 +448,7 @@ struct ToolInfo {
   string name;
   TOOLINFOW ti;
   wstring tip;
-  int id;
+  uintptr_t id;
 };
 
 

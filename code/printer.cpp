@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -128,7 +128,7 @@ void gdioutput::printPage(PrinterObject &po, const PageInfo &pageInfo, RenderedP
   if (pageInfo.printHeader) {
     TextInfo t;
     t.yp = po.ds.MarginY;
-    t.xp = po.ds.PageX - po.ds.MarginX;
+    t.xp = po.ds.PageX - po.ds.MarginX; 
     t.text = pageInfo.pageInfo(page);
     t.format=textRight|fontSmall;
     RenderString(t, po.hDC);

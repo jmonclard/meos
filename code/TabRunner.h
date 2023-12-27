@@ -1,7 +1,7 @@
 ﻿#pragma once
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 #include "autocompletehandler.h"
 
 class Table;
+struct AutoCompleteRecord;
 
 class TabRunner :
   public TabBase, AutoCompleteHandler
@@ -57,7 +58,6 @@ private:
   void listRunners(gdioutput &gdi, const vector<pRunner> &r, bool filterVacant) const;
 
   void fillRunnerList(gdioutput &gdi);
-
   int cardModeStartY;
   int lastRace;
   wstring lastFee;
@@ -99,6 +99,7 @@ private:
     int runnerId;
     oEvent *oe;
     oRunner &getRunner() const;
+    void updateColor(gdioutput& gdi);
   public:
     void init(oRunner &r);
     void handle(gdioutput &gdi, BaseInfo &info, GuiEventType type);
@@ -107,6 +108,8 @@ private:
 
   shared_ptr<EconomyHandler> ecoHandler;
   EconomyHandler *getEconomyHandler(oRunner &r);
+
+  void getAutoCompleteUnpairedCards(gdioutput &gdi, const wstring& w, vector<AutoCompleteRecord>& records);
 
 protected:
   void clearCompetitionData();

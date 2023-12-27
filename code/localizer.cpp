@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2022 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -64,6 +64,8 @@ public:
 
   void saveUnknown(const wstring &file);
   void saveTable(const wstring &file);
+  void saveTranslation(const wstring &file);
+
   void loadTable(const wstring &file, const wstring &language);
   void loadTable(int resource, const wstring &language);
 
@@ -258,10 +260,11 @@ const wstring &LocalizerImpl::translate(const wstring &str, bool &found)
   value[i] = str;
   return value[i];
 }
-const wstring newline = L"\n";
 
 void LocalizerImpl::saveUnknown(const wstring &file)
 {
+  const wstring newline = L"\n";
+
   if (!unknown.empty()) {
     ofstream fout(file.c_str(), ios::trunc|ios::out);
     for (map<wstring, wstring>::iterator it = unknown.begin(); it!=unknown.end(); ++it) {
@@ -279,6 +282,13 @@ void LocalizerImpl::saveUnknown(const wstring &file)
             nl = value.find(newline);
           }
           key = L"help:" + itow(value.length()) + itow(value.find_first_of('.'));
+        }
+      }
+      else {
+        int nl = value.find(newline);
+        while (nl != string::npos) {
+          value.replace(nl, newline.length(), L"\\n");
+          nl = value.find(newline);
         }
       }
       fout << toUTF8(key) << " = " << toUTF8(value) << endl;
@@ -329,6 +339,7 @@ void Localizer::LocalizerInternal::debugDump(const wstring &untranslated, const 
   }
   impl->saveUnknown(untranslated);
   impl->saveTable(translated);
+  impl->saveTranslation(L"spellcheck.txt");
 }
 
 void LocalizerImpl::translateAll(const LocalizerImpl &all) {
@@ -342,8 +353,8 @@ void LocalizerImpl::translateAll(const LocalizerImpl &all) {
   }
 }
 
-void LocalizerImpl::saveTable(const wstring &file)
-{
+void LocalizerImpl::saveTable(const wstring &file) {
+  const wstring newline = L"\n";
   ofstream fout(language+L"_"+file, ios::trunc|ios::out);
   for (map<wstring, wstring>::iterator it = table.begin(); it!=table.end(); ++it) {
     wstring value = it->second;
@@ -353,6 +364,13 @@ void LocalizerImpl::saveTable(const wstring &file)
       nl = value.find(newline);
     }
     fout << toUTF8(it->first) << " = " << toUTF8(value) << endl;
+  }
+}
+
+void LocalizerImpl::saveTranslation(const wstring &file) {
+  ofstream fout(language + L"_" + file, ios::trunc | ios::out);
+  for (map<wstring, wstring>::iterator it = table.begin(); it != table.end(); ++it) {
+    fout << toUTF8(it->second) << endl;
   }
 }
 
@@ -439,20 +457,42 @@ void LocalizerImpl::loadTable(const vector<string> &raw, const wstring &language
   string nline = "\n";
   for (size_t k=0;k<raw.size();k++) {
     const string &s = raw[order[k]];
-    int pos = s.find_first_of('=');
+    size_t pos = s.find_first_of('=');
 
     if (pos==string::npos)
       throw std::exception("Bad file format.");
-    int spos = pos;
-    int epos = pos+1;
-    while (spos>0 && s[spos-1]==' ')
-      spos--;
+    size_t spos = pos;
+    size_t epos = pos+1;
+    const unsigned char *udata = (const unsigned char*)s.data();
 
-    while (unsigned(epos)<s.size() && s[epos]==' ')
-      epos++;
+    // Trim spaces
+    while (spos > 0) {
+      if (isspace(udata[spos - 1]))
+        spos--;
+      else if (udata[spos - 1] == 0xC2 && spos > 1 && udata[spos - 2] == 0xA0) //NBSP
+        spos -= 2;
+      else
+        break;
+    }
+
+    while (epos < s.size()) {
+      if (isspace(udata[epos]))
+        epos++;
+      else if (udata[epos] == 0xC2 && epos + 1 < s.size() && udata[epos + 1] == 0xA0) //NBSP
+        epos += 2;
+      else
+        break;
+    }
 
     string key = s.substr(0, spos);
     string value = s.substr(epos);
+
+    if (value.empty())
+      throw std::exception("Bad file format.");
+
+    if (value.size() > 1 && value[0] == 'Â') {
+      value = value.substr(2);
+    }
 
     int nl = value.find("\\n");
     while (nl!=string::npos) {

@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -145,7 +145,7 @@ void oClass::Set(const xmlobject *xo)
       Id = it->getInt();
     }
     else if (it->is("Name")){
-      Name = it->getw();
+      Name = it->getWStr();
       if (Name.size() > 1 && Name.at(0) == '%') {
         Name = lang.tl(Name.substr(1));
       }
@@ -156,17 +156,17 @@ void oClass::Set(const xmlobject *xo)
     else if (it->is("MultiCourse")){
       set<int> cid;
       vector< vector<int> > multi;
-      parseCourses(it->getRaw(), multi, cid);
+      parseCourses(it->getRawStr(), multi, cid);
       importCourses(multi);
     }
     else if (it->is("LegMethod")){
-      importLegMethod(it->getRaw());
+      importLegMethod(it->getRawStr());
     }
     else if (it->is("oData")){
       getDI().set(*it);
     }
     else if (it->is("Updated")){
-      Modified.setStamp(it->getRaw());
+      Modified.setStamp(it->getRawStr());
     }
   }
 
@@ -267,62 +267,88 @@ void oClass::parseCourses(const string &courses,
   }
 }
 
-string oLegInfo::codeLegMethod() const
-{
+string oLegInfo::codeLegMethod() const {
+  char bsd[16], bret[16], brot[16];
+
+  auto codeTime = [](int t, char *b) -> const char * {
+    if (timeConstSecond == 1 || t <= 0)
+      sprintf_s(b, 16, "%d", t);
+    else
+      sprintf_s(b, 16, "%d.%d", (t / timeConstSecond),(t % timeConstSecond));
+
+    return b;
+  };
+
   char bf[256];
-  sprintf_s(bf, "(%s:%s:%d:%d:%d:%d)", StartTypeNames[startMethod],
-                             LegTypeNames[legMethod],
-                             legStartData, legRestartTime,
-                             legRopeTime, duplicateRunner);
+
+  if (isStartDataTime()) {
+    sprintf_s(bf, "(%s:%s:%s:%s:%s:%d)", StartTypeNames[startMethod],
+              LegTypeNames[legMethod],
+              codeTime(legStartData, bsd),
+              codeTime(legRestartTime, bret),
+              codeTime(legRopeTime, brot),
+              duplicateRunner);
+  }
+  else {
+    sprintf_s(bf, "(%s:%s:%d:%s:%s:%d)", StartTypeNames[startMethod],
+              LegTypeNames[legMethod],
+              legStartData, 
+              codeTime(legRestartTime, bret),
+              codeTime(legRopeTime, brot),
+              duplicateRunner);
+  }
   return bf;
 }
 
-void oLegInfo::importLegMethod(const string &leg)
-{
+void oLegInfo::importLegMethod(const string &leg) {
   //Defaults
-  startMethod=STTime;
-  legMethod=LTNormal;
+  startMethod = STTime;
+  legMethod = LTNormal;
   legStartData = 0;
   legRestartTime = 0;
 
-  size_t begin=leg.find_first_of('(');
+  size_t begin = leg.find_first_of('(');
 
-  if (begin==leg.npos)
+  if (begin == string::npos)
     return;
   begin++;
 
-  string coreLeg=leg.substr(begin, leg.find_first_of(')')-begin);
+  string coreLeg = leg.substr(begin, leg.find_first_of(')') - begin);
 
-  vector< string > legsplit;
+  vector<string> legsplit;
   split(coreLeg, ":", legsplit);
 
-  if (legsplit.size()>=1) {
-    for( int st = 0 ; st < nStartTypes ; ++st ) {
-      if ( legsplit[0]==StartTypeNames[st] ) {
-        startMethod=(StartTypes)st;
+  if (legsplit.size() >= 1) {
+    for (int st = 0; st < nStartTypes; ++st) {
+      if (legsplit[0] == StartTypeNames[st]) {
+        startMethod = (StartTypes)st;
         break;
       }
     }
   }
-  if (legsplit.size()>=2) {
-    for( int t = 0 ; t < nLegTypes ; ++t ) {
-      if ( legsplit[1]==LegTypeNames[t] ) {
-        legMethod=(LegTypes)t;
+  if (legsplit.size() >= 2) {
+    for (int t = 0; t < nLegTypes; ++t) {
+      if (legsplit[1] == LegTypeNames[t]) {
+        legMethod = (LegTypes)t;
         break;
       }
     }
   }
 
-  if (legsplit.size()>=3)
-    legStartData = atoi(legsplit[2].c_str());
+  if (legsplit.size() >= 3) {
+    if (isStartDataTime())
+      legStartData = parseRelativeTime(legsplit[2].c_str());
+    else
+      legStartData = atoi(legsplit[2].c_str());
+  }
 
-  if (legsplit.size()>=4)
-    legRestartTime = atoi(legsplit[3].c_str());
+  if (legsplit.size() >= 4)
+    legRestartTime = parseRelativeTime(legsplit[3].c_str());
 
-  if (legsplit.size()>=5)
-    legRopeTime = atoi(legsplit[4].c_str());
+  if (legsplit.size() >= 5)
+    legRopeTime = parseRelativeTime(legsplit[4].c_str());
 
-  if (legsplit.size()>=6)
+  if (legsplit.size() >= 6)
     duplicateRunner = atoi(legsplit[5].c_str());
 }
 
@@ -549,6 +575,15 @@ oDataContainer &oClass::getDataBuffers(pvoid &data, pvoid &olddata, pvectorstr &
   return *oe->oClassData;
 }
 
+int oEvent::getNumClasses() const {
+  int nc = 0;
+  for (auto& c : Classes) {
+    if (!c.isRemoved())
+      nc++;
+  }
+  return nc;
+}
+
 pClass oEvent::getClassCreate(int Id, const wstring &createName, set<wstring> &exactMatch) {
   if (Id>0) {
     oClassList::iterator it;
@@ -595,11 +630,7 @@ pClass oEvent::getClassCreate(int Id, const wstring &createName, set<wstring> &e
     oClass c(this, Id);
     c.Name = createName;
     exactMatch.insert(createName);
-    //No! Create class with this Id
-    pClass pc=addClass(c);
-
-    //Not found. Auto add...
-    return pc;
+    return addClass(c);
   }
 }
 
@@ -613,6 +644,9 @@ bool oEvent::getClassesFromBirthYear(int year, PersonSex sex, vector<int> &class
 
   for (oClassList::const_iterator it=Classes.begin(); it != Classes.end(); ++it) {
     if (it->isRemoved())
+      continue;
+
+    if (it->getClassType() == ClassType::oClassRelay)
       continue;
 
     PersonSex clsSex = it->getSex();
@@ -921,7 +955,7 @@ void oClass::fillStartTypes(gdioutput &gdi, const string &name, bool firstLeg)
     gdi.addItem(name, lang.tl("Växling"), STChange);
   gdi.addItem(name, lang.tl("Tilldelad"), STDrawn);
   if (!firstLeg)
-    gdi.addItem(name, lang.tl("Jaktstart"), STHunting);
+    gdi.addItem(name, lang.tl("Jaktstart"), STPursuit);
 }
 
 StartTypes oClass::getStartType(int leg) const
@@ -981,7 +1015,7 @@ wstring oClass::getStartDataS(int leg) const
   int s=getStartData(leg);
   StartTypes t=getStartType(leg);
 
-  if (t==STTime || t==STHunting) {
+  if (t==STTime || t==STPursuit) {
     if (s>0)
       return oe->getAbsTime(s);
     else return makeDash(L"-");
@@ -999,7 +1033,7 @@ wstring oClass::getRestartTimeS(int leg) const
   int s=getRestartTime(leg);
   StartTypes t=getStartType(leg);
 
-  if (t==STChange || t==STHunting) {
+  if (t==STChange || t==STPursuit) {
     if (s>0)
       return oe->getAbsTime(s);
     else return makeDash(L"-");
@@ -1017,7 +1051,7 @@ wstring oClass::getRopeTimeS(int leg) const
   int s=getRopeTime(leg);
   StartTypes t=getStartType(leg);
 
-  if (t==STChange || t==STHunting) {
+  if (t==STChange || t==STPursuit) {
     if (s>0)
       return oe->getAbsTime(s);
     else return makeDash(L"-");
@@ -1093,7 +1127,7 @@ bool oClass::checkStartMethod() {
   for (size_t j = 0; j < legInfo.size(); j++) {
     if (!legInfo[j].isParallel())
       st = legInfo[j].startMethod;
-    else if ((legInfo[j].startMethod == STChange || legInfo[j].startMethod == STHunting) && st != legInfo[j].startMethod) {
+    else if ((legInfo[j].startMethod == STChange || legInfo[j].startMethod == STPursuit) && st != legInfo[j].startMethod) {
       legInfo[j].startMethod = STDrawn;
       error = true;
     }
@@ -1152,7 +1186,7 @@ void oClass::setLegType(int leg, LegTypes lt)
 bool oClass::setStartData(int leg, const wstring &s) {
   int rt;
   StartTypes styp=getStartType(leg);
-  if (styp==STTime || styp==STHunting)
+  if (styp==STTime || styp==STPursuit)
     rt=oe->getRelativeTime(s);
   else
     rt=_wtoi(s.c_str());
@@ -1162,11 +1196,11 @@ bool oClass::setStartData(int leg, const wstring &s) {
 
 bool oClass::setStartData(int leg, int value) {
   bool changed = false;
-  if (unsigned(leg)<legInfo.size())
-    changed = legInfo[leg].legStartData!=value;
-  else if (leg>=0) {
+  if (unsigned(leg) < legInfo.size())
+    changed = legInfo[leg].legStartData != value;
+  else if (leg >= 0) {
     changed = true;
-    legInfo.resize(leg+1);
+    legInfo.resize(leg + 1);
   }
   legInfo[leg].legStartData = value;
 
@@ -1479,6 +1513,24 @@ void oClass::getParallelRange(int leg, int &parLegRangeMin, int &parLegRangeMax)
   }
 }
 
+void oClass::getParallelOptionalRange(int leg, int& parLegRangeMin, int& parLegRangeMax) const {
+  parLegRangeMin = leg;
+  while (parLegRangeMin > 0 && size_t(parLegRangeMin) < legInfo.size()) {
+    if (legInfo[parLegRangeMin].isParallel() || legInfo[parLegRangeMin].isOptional())
+      parLegRangeMin--;
+    else
+      break;
+  }
+  parLegRangeMax = leg;
+  while (size_t(parLegRangeMax + 1) < legInfo.size()) {
+    if (legInfo[parLegRangeMax + 1].isParallel() || legInfo[parLegRangeMax + 1].isOptional())
+      parLegRangeMax++;
+    else
+      break;
+  }
+}
+
+
 void oClass::getParallelCourseGroup(int leg, int startNo, vector< pair<int, pCourse> > &group) const {
   group.clear();
   // Assume hasUnorderedLegs
@@ -1569,9 +1621,7 @@ pCourse oClass::selectParallelCourse(const oRunner &r, const SICard &sic) {
   return rc;
 }
 
-
-pCourse oClass::getCourse(int leg, unsigned fork, bool getSampleFromRunner) const
-{
+pCourse oClass::getCourse(int leg, unsigned fork, bool getSampleFromRunner) const {
   leg = mapLeg(leg);
 
   if (size_t(leg) < MultiCourse.size()) {
@@ -1586,7 +1636,7 @@ pCourse oClass::getCourse(int leg, unsigned fork, bool getSampleFromRunner) cons
   }
 
   if (!getSampleFromRunner)
-    return 0;
+    return nullptr;
   else {
     pCourse res = 0;
     for (oRunnerList::iterator it = oe->Runners.begin(); it != oe->Runners.end(); ++it) {
@@ -1934,6 +1984,8 @@ void oClass::updateLeaderTimes() const {
       else if (r->tLeg > leg)
         needupdate = true;
     }
+    if (leg >= tLeaderTime.size())
+      break;
     tLeaderTime[leg].setComplete();
     leg++;
   }
@@ -2178,10 +2230,10 @@ public:
       if (t > 0)
         return t;
       else
-        return 3600 * 24 * 8;
+        return timeConstHour * 24 * 8;
     }
     else {
-      return 3600 * 24 * 8 + r.getId();
+      return timeConstHour * 24 * 8 + r.getId();
     }
   }
 
@@ -2761,8 +2813,8 @@ ClassMetaType oClass::interpretClassType() const {
     xmlList xtypes;
     cType.getObjects("Type", xtypes);
     for (size_t k = 0; k<xtypes.size(); k++) {
-      wstring name = xtypes[k].getAttrib("name").wget();
-      wstring typeS = xtypes[k].getAttrib("class").wget();
+      wstring name = xtypes[k].getAttrib("name").getWStr();
+      wstring typeS = xtypes[k].getAttrib("class").getWStr();
       ClassMetaType mtype = ctUnknown;
       if (stringMatch(typeS, L"normal"))
         mtype = ctNormal;
@@ -3039,7 +3091,7 @@ void oClass::fillInput(int id, vector< pair<wstring, size_t> > &out, size_t &sel
 
   if (id==TID_COURSE) {
     out.clear();
-    oe->fillCourses(out, true);
+    oe->getCourses(out, L"", true);
     out.push_back(make_pair(lang.tl(L"Ingen bana"), 0));
     pCourse c = getCourse(false);
     selected = c ? c->getId() : 0;
@@ -3338,7 +3390,7 @@ void oClass::getStartRange(int leg, int &firstStart, int &lastStart) const {
     size_t s = getLastStageIndex() + 1;
     assert(s>0);
     vector<int> lFirstStart, lLastStart;
-    lFirstStart.resize(s, 3600 * 24 * 365);
+    lFirstStart.resize(s, timeConstHour * 24 * 365);
     lLastStart.resize(s, 0);
     for (oRunnerList::iterator it = oe->Runners.begin(); it != oe->Runners.end(); ++it) {
       if (it->isRemoved() || it->getClassRef(true) != this)
@@ -3407,8 +3459,10 @@ void oClass::calculateSplits() {
   LegResult legRes;
   LegResult legBestTime;
   vector<pRunner> rCls;
-
+  oe->getRunners(Id, -1, rCls, false);
+  /*
   if (isQualificationFinalBaseClass() || isQualificationFinalBaseClass()) {
+    
     for (auto &r : oe->Runners) {
       if (!r.isRemoved() && r.getClassRef(true) == this)
         rCls.push_back(&r);
@@ -3419,7 +3473,7 @@ void oClass::calculateSplits() {
       if (!r.isRemoved() && r.Class == this)
         rCls.push_back(&r);
     }
-  }
+  }*/
 
   for (set<pCourse>::iterator cit = cSet.begin(); cit!= cSet.end(); ++cit)  {
     pCourse pc = *cit;
@@ -3441,10 +3495,10 @@ void oClass::calculateSplits() {
       const int s = min<int>(nc, sp.size());
 
       for (int k = 0; k < s; k++) {
-        if (sp[k].time > 0 && acceptMissingPunch[k]) {
+        if (sp[k].getTime(true) > 0 && acceptMissingPunch[k]) {
           pControl ctrl = tpc->getControl(k);
           // If there is a
-          if (ctrl && ctrl->getStatus() != oControl::StatusBad && ctrl->getStatus() != oControl::StatusOptional)
+          if (ctrl && ctrl->getStatus() != oControl::ControlStatus::StatusBad && ctrl->getStatus() != oControl::ControlStatus::StatusOptional)
             acceptMissingPunch[k] = false;
         }
       }
@@ -3464,16 +3518,16 @@ void oClass::calculateSplits() {
       bool ok = true;
 
       for (int k = 0; k < s; k++) {
-        if (sp[k].time > 0) {
+        if (sp[k].getTime(true) > 0) {
           if (ok) {
             // Store accumulated times
-            int t = sp[k].time - it->tStartTime;
+            int t = sp[k].getTime(true) - it->tStartTime;
             if (it->tStartTime>0 && t>0)
               splitsAcc[k].push_back(t);
           }
 
           if (k == 0) { // start -> first
-            int t = sp[0].time - it->tStartTime;
+            int t = sp[0].getTime(true) - it->tStartTime;
             if (it->tStartTime>0 && t>0) {
               splits[k].push_back(t);
               tLegTimes[k] = t;
@@ -3482,8 +3536,8 @@ void oClass::calculateSplits() {
               tLegTimes[k] = 0;
           }
           else { // control -> control
-            int t = sp[k].time - sp[k-1].time;
-            if (sp[k-1].time>0 && t>0) {
+            int t = sp[k].getTime(true) - sp[k-1].getTime(true);
+            if (sp[k-1].getTime(true)>0 && t>0) {
               splits[k].push_back(t);
               tLegTimes[k] = t;
             }
@@ -3496,12 +3550,12 @@ void oClass::calculateSplits() {
       }
 
       // last -> finish
-      if (sp.size() == nc && sp[nc-1].time>0 && it->FinishTime > 0) {
-        int t = it->FinishTime - sp[nc-1].time;
+      if (sp.size() == nc && sp[nc-1].getTime(true)>0 && it->FinishTime > 0) {
+        int t = it->FinishTime - sp[nc-1].getTime(true);
         if (t>0) {
           splits[nc].push_back(t);
           tLegTimes[nc] = t;
-          if (it->statusOK(true) && (it->FinishTime - it->tStartTime) > 0) {
+          if (it->statusOK(true, false) && (it->FinishTime - it->tStartTime) > 0) {
             splitsAcc[nc].push_back(it->FinishTime - it->tStartTime);
           }
         }
@@ -4008,15 +4062,113 @@ long long oClass::setupForkKey(const vector<int> indices, const vector< vector< 
   return key;
 }
 
-pair<int, int> oClass::autoForking(const vector< vector<int> > &inputCourses) {
+void maximizeSpread(const vector<pCourse> &coursesFirst, const vector<pCourse>& coursesLast, vector<int>& order, int numToGenerate) {
+  
+  struct Node {
+    map<int, Node> children;
+    vector<int> courses;
+    int readIx = 0;
+
+    void insert(int ix, const pCourse& course, int position) {
+      if (course->getNumControls() == position)
+        courses.push_back(ix);
+      else {
+        children[course->getControl(position)->getId()].insert(ix, course, position + 1);
+      }
+    }
+
+    void insertBack(int ix, const pCourse& course, int position) {
+      if (course->getNumControls() == position)
+        courses.push_back(ix);
+      else {
+        children[course->getControl(course->getNumControls() - 1 - position)->getId()].insertBack(ix, course, position + 1);
+      }
+    }
+
+    void shuffleOrder() {
+      if (!courses.empty()) {
+        permute(courses);
+      }
+      for (auto c : children)
+        c.second.shuffleOrder();
+    }
+
+    int getNextForking(int inKey, unordered_map<int, int>& controlUsage) {
+      if (readIx <courses.size()) {
+        int res = courses[readIx++];
+        return res;
+      }
+      int mKey = inKey * 197;
+      while (!children.empty()) {
+        auto it = children.begin();
+        int key;
+        if (children.size() > 1)
+          key = mKey + it->first;
+        else
+          key = inKey;
+
+        int best = controlUsage[it->first] + controlUsage[key];
+        auto next = it;
+        while (++it != children.end()) {
+          key = mKey + it->first;
+          int c = controlUsage[it->first] + controlUsage[key];
+          if (c < best) {
+            best = c;
+            next = it;
+          }
+        }
+        
+        if (children.size() > 1)
+          key = mKey + next->first;
+        else
+          key = inKey;
+
+        int res = next->second.getNextForking(key, controlUsage);
+        if (res != -1) {
+          if (children.size() > 1)
+            ++controlUsage[key];
+          ++controlUsage[next->first];
+          return res;
+        }
+
+        // Empty
+        children.erase(next);
+      }
+      return -1;
+    }
+  };
+
+  Node courseOrderLast;
+  for (size_t i = 0; i < coursesLast.size(); i++)
+    courseOrderLast.insertBack(i, coursesLast[i], 0);
+
+  courseOrderLast.shuffleOrder();
+  unordered_map<int, int> controlUsage;
+  order.resize(coursesLast.size());
+  for (int i = 0; i < order.size(); i++)
+    order[i] = courseOrderLast.getNextForking(0, controlUsage);
+
+  Node courseOrderFirst;
+  for (size_t i : order)
+    courseOrderFirst.insert(i, coursesFirst[i], 0);
+
+  controlUsage.clear();
+  int ns = min<int>(coursesFirst.size(), numToGenerate);
+  order.resize(ns);
+  for (int i = 0; i < ns; i++)
+    order[i] = courseOrderFirst.getNextForking(0, controlUsage);
+}
+
+pair<int, int> oClass::autoForking(const vector<vector<int>> &inputCourses, int numToGenerate) {
   if (inputCourses.size() != getNumStages())
     throw meosException("Internal error");
+  
   int legs = inputCourses.size();
   vector<int> nf(legs);
   vector<unsigned long long> prod(legs);
   vector<int> ix(legs);
   vector< vector< vector<int> > > courseKeys(legs);
-  vector< vector<pCourse> > pCourses(legs);
+  vector<vector<pCourse>> pCourses(legs);
 
   unsigned long long N = 1;
   for (int k = 0; k < legs; k++) {
@@ -4044,7 +4196,7 @@ pair<int, int> oClass::autoForking(const vector< vector<int> > &inputCourses) {
   }
 
   // Sample if there are very many combinations.
-  int sampleFactor = 1;
+  uint64_t sampleFactor = 1;
   while(N > 10000000) {
     sampleFactor *= 13;
     N /= 13;
@@ -4052,9 +4204,9 @@ pair<int, int> oClass::autoForking(const vector< vector<int> > &inputCourses) {
   size_t Ns = size_t(N);
   map<long long, int> count;
   vector<int> ws;
-  for (size_t k = 0; k < Ns; k ++) {
+  for (size_t k = 0; k < Ns; k++) {
+    uint64_t D = uint64_t(k) * sampleFactor;
     for (int j = 0; j < legs; j++) {
-      unsigned long long D = k * sampleFactor;
       if (nf[j]>0) {
         ix[j] = int((D/prod[j] + j) % nf[j]);
       }
@@ -4081,14 +4233,14 @@ pair<int, int> oClass::autoForking(const vector< vector<int> > &inputCourses) {
       clearStageCourses(j);
     }
   }
-  set<int> coursesUsed;
   set<long long> generatedForkKeys;
+  int genLimit = max(numToGenerate * 2, numToGenerate + 100);
 
-  vector< vector<pCourse> > courseMatrix(legs);
+  vector<vector<pCourse>> courseMatrix(legs);
   for (size_t k = 0; k < Ns; k++) {
     long long forkKey = 0;
     for (int j = 0; j < legs; j++) {
-      unsigned long long D = (k * 997)%Ns * sampleFactor;
+      uint64_t D = uint64_t((k * 997)%Ns) * sampleFactor;
       if (nf[j]>0) {
         ix[j] = int((D/prod[j] + j) % nf[j]);
         forkKey = forkKey * 997 + ix[j];
@@ -4100,53 +4252,85 @@ pair<int, int> oClass::autoForking(const vector< vector<int> > &inputCourses) {
       generatedForkKeys.insert(forkKey);
       for (int j = 0; j < legs; j++) {
         if (nf[j] > 0) {
-          coursesUsed.insert(pCourses[j][ix[j]]->getId());
+   //       coursesUsed.insert(pCourses[j][ix[j]]->getId());
           courseMatrix[j].push_back(pCourses[j][ix[j]]);
-          //addStageCourse(j, pCourses[j][ix[j]]);
         }
       }
     }
-    if (generatedForkKeys.size() > 200)
+    if (generatedForkKeys.size() >= genLimit)
       break;
   }
+
   vector<int> fperm;
   for (size_t j = 0; j < courseMatrix.size(); j++) {
     if (courseMatrix[j].empty())
       continue;
 
+    int jj = courseMatrix.size() - 1;
+    while (courseMatrix[jj].empty())
+      jj--;
+
+    maximizeSpread(courseMatrix[j], courseMatrix[jj], fperm, numToGenerate);
     // Take the first used course.
-    fperm.resize(courseMatrix[j].size());
+    /*fperm.resize(courseMatrix[j].size());
     for (size_t i = 0; i < fperm.size(); i++)
-      fperm[i] = i;
+      fperm[i] = i;*/
     break;
   }
-  permute(fperm);
+
+  // Determine first bib in class (if defined)
+  wstring bibInfo = getDCI().getString("Bib");
+  wchar_t pattern[32];
+  int firstNumber = extractBibPattern(bibInfo, pattern);
+  if (firstNumber == 0) {
+    // Not explicitly defined. Look at any teams
+    vector<pTeam> tl;
+    oe->getTeams(getId(), tl);
+    int minBib = 10000000;
+    int minSN = 10000000;
+    for (pTeam t : tl) {
+      t->getBib();
+      int n = extractBibPattern(bibInfo, pattern);
+      if (n > 0)
+        minBib = std::min(minBib, n);
+
+      int no = t->getStartNo();
+      if (no > 0)
+        minSN = std::min(minSN, no);
+    }
+    if (minBib > 0)
+      firstNumber = minBib;
+    else if (minSN > 0)
+      firstNumber = minSN;
+  }
+
+  unsigned int off = 0;
+  if (firstNumber > 0) {
+    // index = (index-1) % courses.size();
+    unsigned firstCourse = unsigned(firstNumber - 1) % fperm.size();
+    off = fperm.size() - firstCourse;
+  }
+
+  set<int> coursesUsed;
   int lastSet = -1;
   for (int j = 0; j < legs; j++) {
     if (nf[j] > 0) {
       lastSet = j;
-      for (size_t k = 0; k < courseMatrix[j].size(); k++) {
-        if (k < fperm.size()) {
-          addStageCourse(j, courseMatrix[j][fperm[k]], -1);
-        }
-        else {
-          addStageCourse(j, courseMatrix[j][k], -1);
-        }
+      for (size_t k = 0; k < fperm.size(); k++) {
+        int kk = unsigned(k + off) % fperm.size();
+        coursesUsed.insert(courseMatrix[j][fperm[kk]]->getId());
+        addStageCourse(j, courseMatrix[j][fperm[kk]], -1);
       }
     }
     else if (lastSet >= 0 && getLegType(j) == LTExtra) {
       MultiCourse[j] = MultiCourse[lastSet];
-      // getCourses(lastSet, courses);
-      //clearStageCourses(j);
-      //for (size_t k = 0; k < courses.size(); k++)
-      //  addStageCourse(j, courses[k]->getId());
     }
     else {
       lastSet = -1;
     }
   }
 
-  return make_pair<int, int>(generatedForkKeys.size(), coursesUsed.size());
+  return make_pair<int, int>(fperm.size(), coursesUsed.size());
 }
 
 int oClass::extractBibPattern(const wstring &bibInfo, wchar_t pattern[32]) {
@@ -4309,8 +4493,14 @@ pair<int, wstring> oClass::getNextBib() {
     }
   }
 
-  if (bibs.empty())
+  if (bibs.empty()) {
+    wstring bibInfo = getDCI().getString("Bib");
+    int firstNumber = extractBibPattern(bibInfo, pattern);
+    if (firstNumber > 0)
+      return make_pair(firstNumber, bibInfo);
+
     return make_pair(0, _EmptyWString);
+  }
   int candidate = -1;
   for (set<int>::iterator it = bibs.begin(); it != bibs.end(); ++it) {
     if (candidate > 0 && *it != candidate) {
@@ -4511,7 +4701,7 @@ void oClass::drawSeeded(ClassSeedMethod seed, int leg, int firstStart,
 
 bool oClass::hasClassGlobalDependence() const {
   for (size_t k = 0; k < legInfo.size(); k++) { 
-    if (legInfo[k].startMethod == STHunting)
+    if (legInfo[k].startMethod == STPursuit)
       return true;
   }
   return false;
@@ -4570,11 +4760,14 @@ set<oClass::DrawSpecified> oClass::getDrawSpecification() const {
   return res;
 }
 
-void oClass::initClassId(oEvent &oe) {
+void oClass::initClassId(oEvent &oe, const set<int>& classes) {
   vector<pClass> cls;
   oe.getClasses(cls, true);
   map<long long, wstring> id2Cls;
   for (size_t k = 0; k < cls.size(); k++) {
+    if (!classes.empty() && !classes.count(cls[k]->getId()))
+      continue;
+
     long long extId = cls[k]->getExtIdentifier();
     if (extId > 0) {
       if (id2Cls.count(extId)) {
@@ -4586,8 +4779,11 @@ void oClass::initClassId(oEvent &oe) {
   }
   // Generate external identifiers when not set
   for (size_t k = 0; k < cls.size(); k++) {
+    if (!classes.empty() && !classes.count(cls[k]->getId()))
+      continue;
+
     long long extId = cls[k]->getExtIdentifier();
-    if (extId <= 0) {
+    if (extId == 0) {
       long long id = cls[k]->getId();
       while (id2Cls.count(id)) {
         id += 100000;
@@ -4614,6 +4810,18 @@ int oClass::getPreceedingLeg(int leg) const {
       return k-1;
   }
   return -1;
+}
+
+int oClass::getResultDefining(int leg) const {
+  int res = leg;
+  while (size_t(res+1) < legInfo.size() &&
+         (legInfo[res+1].isParallel() || legInfo[res+1].isOptional()))
+    res++;
+
+  if (size_t(res) >= legInfo.size())
+    res = legInfo.size() - 1;
+
+  return res;
 }
 
 bool oClass::lockedForking() const {
@@ -4863,7 +5071,7 @@ void oClass::updateFinalClasses(oRunner *causingResult, bool updateStartNumbers)
       int lastPlace = 0, orderPlace = 1;
       int numEqual = 0;
       for (size_t k = 0; k < classSplit[i].size(); k++) {
-        auto &res = classSplit[i][k]->getTempResult();
+        const auto &res = classSplit[i][k]->getTempResult();
         //int heat = 0;
         if (res.getStatus() == StatusOK) {
           int place = res.getPlace();
