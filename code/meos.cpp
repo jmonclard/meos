@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -118,7 +118,7 @@ HWND hMainTab=NULL;
 
 list<TabObject> *tabList = nullptr;
 void scrollVertical(gdioutput *gdi, int yInc, HWND hWnd);
-static int currentFocusIx = 0;
+static size_t currentFocusIx = 0;
 
 void resetSaveTimer() {
   if (autoTask)
@@ -313,6 +313,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
   lang.get().addLangResource(L"Français", L"110");
   lang.get().addLangResource(L"Español", L"111");
   lang.get().addLangResource(L"Russian", L"107");
+  lang.get().addLangResource(L"Ukrainian", L"112");
 
   if (fileExists(L"extra.lng")) {
     lang.get().addLangResource(L"Extraspråk", L"extra.lng");
@@ -1832,14 +1833,13 @@ bool getMeOSFile(wchar_t *FileNamePath, const wchar_t *FileName) {
   return true;
 }
 
-bool getUserFile(wchar_t *FileNamePath, const wchar_t *FileName)
-{
+bool getUserFile(wchar_t* FileNamePath, const wchar_t* FileName) {
   wchar_t Path[MAX_PATH];
   wchar_t AppPath[MAX_PATH];
 
-  if (SHGetSpecialFolderPath(hWndMain, Path, CSIDL_APPDATA, 1)!=NOERROR) {
-    int i=wcslen(Path);
-    if (Path[i-1]!='\\')
+  if (SHGetSpecialFolderPath(hWndMain, Path, CSIDL_APPDATA, 1) != NOERROR) {
+    int i = wcslen(Path);
+    if (Path[i - 1] != '\\')
       wcscat_s(Path, MAX_PATH, L"\\");
 
     wcscpy_s(AppPath, MAX_PATH, Path);

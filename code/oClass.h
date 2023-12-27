@@ -1,7 +1,7 @@
 ﻿#pragma once
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -30,6 +30,7 @@ class oClass;
 typedef oClass* pClass;
 class oDataInterface;
 class GeneralResult;
+class oRunner;
 
 const int MaxClassId = 1000000;
 
@@ -39,7 +40,7 @@ enum StartTypes {
   STTime=0,
   STChange,
   STDrawn,
-  STHunting,
+  STPursuit,
   ST_max
 };
 enum { nStartTypes = ST_max };
@@ -100,12 +101,15 @@ struct oLegInfo {
   LegTypes legMethod;
   bool isParallel() const {return legMethod == LTParallel || legMethod == LTParallelOptional;}
   bool isOptional() const {return legMethod == LTParallelOptional || legMethod == LTExtra || legMethod == LTIgnore;}
-  //Interpreteation depends. Can be starttime/first start
-  //or number of earlier legs to consider.
+  //Interpreteation depends. Can be starttime/first start (if styp==STTime || styp==STPursuit)
+  // or number of earlier legs to consider.
   int legStartData;
   int legRestartTime;
   int legRopeTime;
   int duplicateRunner;
+
+  /** Return true if start data should be interpreted as a time.*/
+  bool isStartDataTime() const { return startMethod == STTime || startMethod == STPursuit; }
 
   // Transient, deducable data
   int trueSubLeg;
@@ -404,7 +408,7 @@ public:
 
   void updateFinalClasses(oRunner *causingResult, bool updateStartNumbers);
 
-  static void initClassId(oEvent &oe);
+  static void initClassId(oEvent &oe, const set<int>& classes);
 
   // Return true if forking in the class is locked
   bool lockedForking() const;
@@ -444,7 +448,7 @@ public:
   // Autoassign new bibs
   static void extractBibPatterns(oEvent &oe, map<int, pair<wstring, int> > &patterns);
   pair<int, wstring> getNextBib(map<int, pair<wstring, int> > &patterns); // Version that calculates next free bib from cached data (fast, no gap usage)
-  pair<int, wstring> oClass::getNextBib(); // Version that calculates next free bib (slow, but reuses gaps)
+  pair<int, wstring> getNextBib(); // Version that calculates next free bib (slow, but reuses gaps)
 
   bool usesCourse(const oCourse &crs) const;
   
@@ -570,6 +574,10 @@ public:
   // Get the linear leg number of the preceeding leg
   int getPreceedingLeg(int leg) const;
 
+  // Get result defining leg (for parallel legs, the last leg in the currrent parallel set)
+  int getResultDefining(int leg) const;
+
+
   /// Get a string 1, 2a, etc describing the number of the leg
   wstring getLegNumber(int leg) const;
 
@@ -599,7 +607,9 @@ public:
 
   void setDirectResult(bool directResult);
   bool hasDirectResult() const;
-
+  bool isValidLeg(int legIndex) const {
+    return legIndex == -1 || legIndex == 0 || (legIndex > 0 && legIndex<int(MultiCourse.size()));
+  }
   bool isCourseUsed(int Id) const;
   wstring getLength(int leg) const;
 
@@ -700,7 +710,7 @@ public:
   int getEntryFee(const wstring &date, int age) const;
 
   /// Get all class fees
-  vector<pair<wstring, size_t>> oClass::getAllFees() const;
+  vector<pair<wstring, size_t>> getAllFees() const;
 
   // Clear cached data
   void clearCache(bool recalculate);
@@ -712,7 +722,7 @@ public:
 
   // Automatically setup forkings using the specified courses.
   // Returns <number of forkings created, number of courses used>
-  pair<int, int> autoForking(const vector< vector<int> > &inputCourses);
+  pair<int, int> autoForking(const vector< vector<int> > &inputCourses, int numToGenerateMax);
 
   bool hasUnorderedLegs() const;
   void setUnorderedLegs(bool order);
@@ -720,6 +730,8 @@ public:
   // Returns 0 for no parallel selection (= normal mode)
   pCourse selectParallelCourse(const oRunner &r, const SICard &sic);
   void getParallelRange(int leg, int &parLegRangeMin, int &parLegRangeMax) const;
+  void getParallelOptionalRange(int leg, int& parLegRangeMin, int& parLegRangeMax) const;
+
   bool hasAnyCourse(const set<int> &crsId) const;
 
   GeneralResult *getResultModule() const;

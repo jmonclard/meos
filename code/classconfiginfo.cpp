@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -75,6 +75,10 @@ bool ClassConfigInfo::hasTeamClass() const {
   return !relay.empty() || !patrol.empty() || !raceNRes.empty();
 }
 
+bool ClassConfigInfo::hasQualificationFinal() const {
+  return !knockout.empty();
+}
+
 void ClassConfigInfo::getPatrol(set<int> &sel) const {
   sel.insert(patrol.begin(), patrol.end());
 }
@@ -141,7 +145,7 @@ void oEvent::getClassConfigurationInfo(ClassConfigInfo &cnf) const
     if (Courses.empty() || (it->getCourse(false) == nullptr && it->getCourse(0,0, false) == nullptr)  ||
         (it->getCourse(false) && it->getCourse(false)->getNumControls() == 0)) {
 
-      if (!it->isQualificationFinalBaseClass()) {
+      if (!it->isQualificationFinalBaseClass() && !it->isQualificationFinalClass()) {
         // No course.
         if (runnerPerClass.empty()) {
           for (auto &r : Runners) {
@@ -216,7 +220,7 @@ void oEvent::getClassConfigurationInfo(ClassConfigInfo &cnf) const
       
       for (size_t k = 0; k < it->getNumStages(); k++) {
         StartTypes st = it->getStartType(k);
-        if (st == STDrawn || st == STHunting) {
+        if (st == STDrawn || st == STPursuit) {
           cnf.legNStart[k].push_back(it->getId());
           if (cnf.timeStart.size() <= k)
             cnf.timeStart.resize(k+1);
@@ -239,7 +243,7 @@ void oEvent::getClassConfigurationInfo(ClassConfigInfo &cnf) const
 
       for (size_t k = 0; k < it->getNumStages(); k++) {
         StartTypes st = it->getStartType(k);
-        if (st == STDrawn || st == STHunting) {
+        if (st == STDrawn || st == STPursuit) {
           cnf.raceNStart[k].push_back(it->getId());
           if (cnf.timeStart.size() <= k)
             cnf.timeStart.resize(k+1);

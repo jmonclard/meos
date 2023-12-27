@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -126,7 +126,7 @@ void Download::initInternet() {
     throw meosException(error);
   }
 
-  DWORD dwTimeOut = 180 * 1000;
+  DWORD dwTimeOut = 60 * 10 * 1000;
   InternetSetOption(hInternet, INTERNET_OPTION_RECEIVE_TIMEOUT, &dwTimeOut, sizeof(DWORD));
   InternetSetOption(hInternet, INTERNET_OPTION_SEND_TIMEOUT, &dwTimeOut, sizeof(DWORD));
 }

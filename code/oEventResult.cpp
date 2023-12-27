@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -112,7 +112,7 @@ void oEvent::calculateSplitResults(int controlIdFrom, int controlIdTo) {
     if (controlIdTo == 0 || controlIdTo == oPunch::PunchFinish) {
       it->tempRT = max(0, it->FinishTime - (st + it->tStartTime) );
       if (it->tempRT > 0)
-        it->tempRT += it->getTimeAdjustment();
+        it->tempRT += it->getTimeAdjustment(false);
       it->tempStatus = it->tStatus;
     }
     else {
@@ -223,7 +223,9 @@ void oEvent::calculateResults(const set<int> &classes, ResultType resultType, bo
       getRunners(classes, runnersCls);
 
     runners.reserve(runnersCls.size());
-    bool resOK = true;
+    
+    bool resOK = lastResultCalcPrelState == includePreliminary;
+    lastResultCalcPrelState = includePreliminary;
 
     for (auto it : runnersCls) {
       oRunner &r = *it;
@@ -337,26 +339,26 @@ void oEvent::calculateRunnerResults(ResultType resultType,
 
     if (rgClasses.count(clsId)) {
       RunnerStatus st;
-      if (totalResults)
-        st = useComputedResult ? it->getStatusComputed() : it->getStatus();
+      if (!totalResults)
+        st = useComputedResult ? it->getStatusComputed(false) : it->getStatus();
       else
-        st = it->getTotalStatus();
+        st = it->getTotalStatus(false);
 
       if (st == StatusOK)
-        score = numeric_limits<int>::max() - (3600 * 24 * 7 * max(1, 1 + it->getRogainingPoints(useComputedResult, totalResults)) - it->getRunningTime(false));
+        score = numeric_limits<int>::max() - (timeConstHour * 24 * 7 * max(1, 1 + it->getRogainingPoints(useComputedResult, totalResults)) - it->getRunningTime(false));
       else
         score = -1;
     }
     else if (!totalResults) {
-      RunnerStatus st = useComputedResult ? it->getStatusComputed() : it->getStatus();
+      RunnerStatus st = useComputedResult ? it->getStatusComputed(false) : it->getStatus();
       if (st == StatusOK || (includePreliminary && st == StatusUnknown && it->FinishTime > 0))
-        score = it->getRunningTime(useComputedResult) + it->getNumShortening() * 3600 * 24 * 8;
+        score = it->getRunningTime(useComputedResult) + it->getNumShortening() * timeConstHour * 24 * 8;
       else
         score = -1;
     }
     else {
       int tt = it->getTotalRunningTime(it->FinishTime, useComputedResult, true);
-      RunnerStatus totStat = it->getTotalStatus();
+      RunnerStatus totStat = it->getTotalStatus(false);
       if (totStat == StatusOK || (includePreliminary && totStat == StatusUnknown && it->inputStatus == StatusOK) && tt > 0)
         score = tt;
       else
@@ -600,7 +602,7 @@ void oEvent::calculateModuleTeamResults(const set<int> &cls, vector<oTeam *> &te
       int clsId = t->getClassId(true);
       if (t->tComputedStatus == StatusOK && t->inputStatus == StatusOK) {
         if (rgClasses.count(clsId))
-          totScore = numeric_limits<int>::max() - (7 * 24 * 3600 * max(1, (1 + t->getRogainingPoints(true, true))) - (t->tComputedTime + t->inputTime));
+          totScore = numeric_limits<int>::max() - (7 * 24 * timeConstHour * max(1, (1 + t->getRogainingPoints(true, true))) - (t->tComputedTime + t->inputTime));
         else
           totScore = t->tComputedTime + t->inputTime;
       }
@@ -655,7 +657,7 @@ void oEvent::calculateModuleTeamResults(const set<int> &cls, vector<oTeam *> &te
           int legScore = -1;
           if (res.status == StatusOK) {
             if (rgClasses.count(clsId))
-              legScore = numeric_limits<int>::max() - (7 * 24 * 3600 * max(1, (1 + t->Runners[i]->tComputedPoints)) - res.time);
+              legScore = numeric_limits<int>::max() - (7 * 24 * timeConstHour * max(1, (1 + t->Runners[i]->tComputedPoints)) - res.time);
             else
               legScore = res.time;
           }
@@ -1116,7 +1118,7 @@ void oEvent::computePreliminarySplitResults(const set<int> &classes) const {
         negLeg = -1000; //Finish, smallest number
         for (int j = 0; j < nRun; j++) {
           auto r = rr[j];
-          if (r->prelStatusOK(true, false)) {
+          if (r->prelStatusOK(true, false, false)) {
             int time;
             if (!r->tInTeam || !totRes)
               time = r->getRunningTime(true);

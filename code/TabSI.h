@@ -1,7 +1,7 @@
 ﻿#pragma once
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2023 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -30,9 +30,9 @@ struct PunchInfo;
 class csvparser;
 struct AutoCompleteRecord;
 
-class TabSI :  public TabBase, AutoCompleteHandler {
+class TabSI final :  public TabBase, AutoCompleteHandler {
 public:
-  enum SIMode {
+  enum class SIMode {
     ModeReadOut,
     ModeAssignCards,
     ModeCheckCards,    
@@ -40,9 +40,12 @@ public:
     ModeCardData,
     ModeRegisterCards,
   };
- 
+
+  map<SIMode, string> modeName;
+
   void setMode(SIMode m) { mode = m; }
 private:
+
   /** Try to automatcally assign a class to runner (if none is given)
       Return true if runner has a class on exist */
   bool autoAssignClass(pRunner r, const SICard &sic);
@@ -57,13 +60,14 @@ private:
                    bool silent=false);
   bool processUnmatched(gdioutput &gdi, const SICard &csic, bool silent);
 
-  void rentCardInfo(gdioutput &gdi, int width);
-
   bool interactiveReadout;
   bool useDatabase;
   bool printSplits;
   bool printStartInfo;
   bool manualInput;
+  bool multipleStarts = false;
+
+  bool firstLoadedAfterNew = true;
   PrinterObject splitPrinter;
   list< pair<unsigned, int> > printPunchRunnerIdQueue;
   void addToPrintQueue(pRunner r);
@@ -74,6 +78,8 @@ private:
     NotOK,
     ActionNeeded
   };
+
+  string typeFromSndType(SND s);
 
   set<wstring> checkedSound;
 
@@ -95,10 +101,9 @@ private:
   //Operation mode
   SIMode mode;
   bool lockedFunction = false;
-  bool allowControl = true;
-  bool allowFinish = true;
-  bool allowStart = false;
 
+  void changeMapping(gdioutput& gdi) const;
+  void fillMappings(gdioutput& gdi) const;
   int currentAssignIndex;
 
   void printSIInfo(gdioutput &gdi, const wstring &port) const;
@@ -175,7 +180,7 @@ private:
 
   void showModeCardData(gdioutput &gdi);
 
-  void printCard(gdioutput &gdi, int cardId, SICard *crdRef, bool forPrinter) const;
+  void printCard(gdioutput &gdi, int lineBreak, int cardId, SICard *crdRef, bool forPrinter) const;
   void generateSplits(int cardId, gdioutput &gdi);
 
   static int analyzePunch(SIPunch &p, int &start, int &accTime, int &days);
@@ -217,10 +222,51 @@ private:
   int readoutFunctionX = 0;
   int readoutFunctionY = 0;
 
+  int optionBarPosY = 0;
+  int optionBarPosX = 0;
+  int check_toolbar_xb = 0;
+  int check_toolbar_yb = 0;
+
+  enum class CheckBox {
+    Interactive, 
+    UseDB,
+    PrintSplits, 
+    PrintStart,
+    Manual,
+    SeveralTurns,
+    AutoTie, 
+    AutoTieRent
+  };
+
+  void checkBoxToolBar(gdioutput& gdi, const set<CheckBox> &items) const;
+
+
   void playSoundResource(int res) const;
   void playSoundFile(const wstring& file) const;
+
+  struct StoredReadout {
+    wstring info;
+    wstring warnings;
+    wstring cardno;
+    wstring statusline;
+    vector<int> MP;
+    GDICOLOR color;
+    bool rentCard = false;
+
+    RECT computeRC(gdioutput &gdi) const;
+    void render(gdioutput &gdi, const RECT &rc) const;
+    static void rentCardInfo(gdioutput &gdi, const RECT &rcIn);
+  };
+
+  list<StoredReadout> readCards;
+  void renderReadCard(gdioutput &gdi, int maxNumber);
+
 protected:
-  void clearCompetitionData();
+  void clearCompetitionData() final;
+
+  static wstring getPlace(const oRunner *r);
+  static wstring getTimeString(const oRunner *r);
+  static wstring getTimeAfterString(const oRunner *r);
 
 public:
 
@@ -265,6 +311,8 @@ public:
 
   int siCB(gdioutput &gdi, int type, void *data);
 
+  void writeDefaultHiredCards();
+
   void logCard(gdioutput &gdi, const SICard &card);
 
   void setCardNumberField(const string &fieldId) {insertCardNumberField=fieldId;}
@@ -280,7 +328,13 @@ public:
   void clearQueue() { CardQueue.clear(); }
   void refillComPorts(gdioutput &gdi);
 
-  bool loadPage(gdioutput &gdi);
+  bool loadPage(gdioutput &gdi) final;
+  void showReadoutMode(gdioutput & gdi);
+
+  void showReadoutStatus(gdioutput &gdi, const oRunner *r, 
+                         const oCard *crd, SICard *card,
+                         const wstring &missingPunchList);
+
   TabSI(oEvent *oe);
   ~TabSI(void);
 };
