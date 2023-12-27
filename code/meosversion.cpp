@@ -35,7 +35,7 @@ wstring getMeosDate() {
 }
 
 wstring getBuildType() {
-  return L"U1"; // No parantheses (...)
+  return L"U1-JM"; // No parantheses (...)
 }
 
 wstring getMajorVersion() {
