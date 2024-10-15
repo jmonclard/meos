@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2024 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -42,7 +42,7 @@
 
 template<typename T> struct ResultCalcData {
   int groupId;
-  int score;
+  int64_t score;
   bool operator<(const ResultCalcData<T> &c) const {
     if (groupId != c.groupId)
       return groupId < c.groupId;
@@ -52,12 +52,19 @@ template<typename T> struct ResultCalcData {
   T *dst;
 
   ResultCalcData() {}
-  ResultCalcData(int g, int s, T* d) : groupId(g), score(s), dst(d) {}
+  ResultCalcData(int g, int64_t s, T* d) : groupId(g), score(s), dst(d) {}
 };
+
+
+int resultKey(int from = oPunch::PunchStart, int to = oPunch::PunchFinish, oEvent::ResultType type = oEvent::ResultType::ClassResult, bool includePrel = false) {
+  assert(int(type) < 8);
+  return ((from * 1024 + to) * 8 + int(type))*2 + includePrel;
+}
 
 template<typename T, typename Apply> void calculatePlace(vector<ResultCalcData<T>> &data, Apply apply) {
   int groupId = -1;
-  int cPlace = 0, vPlace = 0, cScore = 0;
+  int cPlace = 0, vPlace = 0;
+  int64_t cScore = 0;
   bool invalidClass = false;
   bool useResults = true;
   sort(data.begin(), data.end());
@@ -97,6 +104,7 @@ template<typename T, typename Apply> void calculatePlace(vector<ResultCalcData<T
 
 void oEvent::calculateSplitResults(int controlIdFrom, int controlIdTo) {
   oRunnerList::iterator it;
+  lastResultCalcSplitResult = controlIdFrom != oPunch::PunchStart || controlIdTo != oPunch::PunchFinish;
 
   for (it=Runners.begin(); it!=Runners.end(); ++it) {
     int st = 0;
@@ -112,7 +120,7 @@ void oEvent::calculateSplitResults(int controlIdFrom, int controlIdTo) {
     if (controlIdTo == 0 || controlIdTo == oPunch::PunchFinish) {
       it->tempRT = max(0, it->FinishTime - (st + it->tStartTime) );
       if (it->tempRT > 0)
-        it->tempRT += it->getTimeAdjustment();
+        it->tempRT += it->getTimeAdjustment(false);
       it->tempStatus = it->tStatus;
     }
     else {
@@ -130,6 +138,7 @@ void oEvent::calculateSplitResults(int controlIdFrom, int controlIdTo) {
   int cPlace=0;
   int vPlace=0;
   int cTime=0;
+  int key = resultKey(controlIdFrom, controlIdTo);
 
   for (it=Runners.begin(); it != Runners.end(); ++it){
     if (it->getClassId(true)!=cClassId){
@@ -150,11 +159,10 @@ void oEvent::calculateSplitResults(int controlIdFrom, int controlIdTo) {
         vPlace=cPlace;
 
       cTime=it->tempRT;
-
-      it->tPlace.update(*this, vPlace, false); // XXX User other result container
+      it->tPlace.update(*this, key, vPlace, false);
     }
     else
-      it->tPlace.update(*this, 0, false);
+      it->tPlace.update(*this, key, 0, false);
   }
 }
 
@@ -213,6 +221,8 @@ void oEvent::calculateResults(const set<int> &classes, ResultType resultType, bo
       }
     }
   }
+  
+  int resKey = resultKey(1, 2, resultType, includePreliminary);
 
   vector<const oRunner *> runners;
   {
@@ -223,7 +233,11 @@ void oEvent::calculateResults(const set<int> &classes, ResultType resultType, bo
       getRunners(classes, runnersCls);
 
     runners.reserve(runnersCls.size());
-    bool resOK = true;
+    
+    
+    bool resOK = lastResultCalcPrelState == includePreliminary && !lastResultCalcSplitResult;
+    lastResultCalcPrelState = includePreliminary;
+    lastResultCalcSplitResult = false;
 
     for (auto it : runnersCls) {
       oRunner &r = *it;
@@ -235,13 +249,13 @@ void oEvent::calculateResults(const set<int> &classes, ResultType resultType, bo
       runners.push_back(&r);
       
       if (resOK) {
-        if (courseResults && r.tCoursePlace.isOld(*this))
+        if (courseResults && r.tCoursePlace.isOld(*this, resKey))
           resOK = false;
-        else if (classCourseResults && r.tCourseClassPlace.isOld(*this))
+        else if (classCourseResults && r.tCourseClassPlace.isOld(*this, resKey))
           resOK = false;
-        else if (totalResults && r.tTotalPlace.isOld(*this))
+        else if (totalResults && r.tTotalPlace.isOld(*this, resKey))
           resOK = false;
-        else if (r.tPlace.isOld(*this))
+        else if (r.tPlace.isOld(*this, resKey))
           resOK = false;
       }
     }
@@ -289,7 +303,7 @@ void oEvent::calculateResults(const set<int> &classes, ResultType resultType, bo
 
         for (pRunner r : resCalc.second) {
           r->updateComputedResultFromTemp();
-          r->tPlace.update(*oe, r->getTempResult().getPlace(), false);
+          r->tPlace.update(*oe, resKey,  r->getTempResult().getPlace(), false);
           if (r->tComputedStatus == StatusOK && r->tComputedTime>0) {
             pClass cls = r->getClassRef(true);
             cls->getLeaderInfo(oClass::AllowRecompute::No, 
@@ -320,7 +334,8 @@ void oEvent::calculateRunnerResults(ResultType resultType,
   typedef ResultCalcData<const oRunner> DT;
   vector<DT> resData;
   resData.reserve(runners.size());
-  int groupId, score;
+  int groupId;
+  int64_t score;
   for (auto it : runners) {
     int clsId = it->getClassId(true);
     if (classCourseResults) {
@@ -337,26 +352,28 @@ void oEvent::calculateRunnerResults(ResultType resultType,
 
     if (rgClasses.count(clsId)) {
       RunnerStatus st;
-      if (totalResults)
-        st = useComputedResult ? it->getStatusComputed() : it->getStatus();
+      if (!totalResults)
+        st = useComputedResult ? it->getStatusComputed(false) : it->getStatus();
       else
-        st = it->getTotalStatus();
+        st = it->getTotalStatus(false);
 
-      if (st == StatusOK)
-        score = numeric_limits<int>::max() - (3600 * 24 * 7 * max(1, 1 + it->getRogainingPoints(useComputedResult, totalResults)) - it->getRunningTime(false));
+      if (st == StatusOK) {
+        uint64_t rp = int64_t(timeConstHour * 7 * 24) * max<uint64_t>(1, 1 + it->getRogainingPoints(useComputedResult, totalResults));
+        score = numeric_limits<int64_t>::max() - rp + it->getRunningTime(false);
+      }
       else
         score = -1;
     }
     else if (!totalResults) {
-      RunnerStatus st = useComputedResult ? it->getStatusComputed() : it->getStatus();
+      RunnerStatus st = useComputedResult ? it->getStatusComputed(false) : it->getStatus();
       if (st == StatusOK || (includePreliminary && st == StatusUnknown && it->FinishTime > 0))
-        score = it->getRunningTime(useComputedResult) + it->getNumShortening() * 3600 * 24 * 8;
+        score = it->getRunningTime(useComputedResult) + it->getNumShortening() * timeConstHour * 24 * 8;
       else
         score = -1;
     }
     else {
       int tt = it->getTotalRunningTime(it->FinishTime, useComputedResult, true);
-      RunnerStatus totStat = it->getTotalStatus();
+      RunnerStatus totStat = it->getTotalStatus(false);
       if (totStat == StatusOK || (includePreliminary && totStat == StatusUnknown && it->inputStatus == StatusOK) && tt > 0)
         score = tt;
       else
@@ -368,14 +385,18 @@ void oEvent::calculateRunnerResults(ResultType resultType,
 
   bool useStdResultCtr = resultType == ResultType::ClassResultDefault || resultType == ResultType::TotalResultDefault;
 
+  int resKey = resultKey(1, 2, resultType, includePreliminary);
+
   if (courseResults)
-    calculatePlace(resData, [this, useStdResultCtr](DT &res, int value) {res.dst->tCoursePlace.update(*this, value, useStdResultCtr); });
+    calculatePlace(resData, [this, resKey, useStdResultCtr](DT &res, int value) {res.dst->tCoursePlace.update(*this, resKey, value, useStdResultCtr); });
   else if (classCourseResults)
-    calculatePlace(resData, [this, useStdResultCtr](DT &res, int value) {res.dst->tCourseClassPlace.update(*this, value, useStdResultCtr); });
+    calculatePlace(resData, [this, resKey, useStdResultCtr](DT &res, int value) {res.dst->tCourseClassPlace.update(*this, resKey, value, useStdResultCtr); });
   else if (totalResults)
-    calculatePlace(resData, [this, useStdResultCtr](DT &res, int value) {res.dst->tTotalPlace.update(*this, value, useStdResultCtr); });
+    calculatePlace(resData, [this, resKey, useStdResultCtr](DT &res, int value) {res.dst->tTotalPlace.update(*this, resKey, value, useStdResultCtr); });
   else
-    calculatePlace(resData, [this, useStdResultCtr](DT &res, int value) {res.dst->tPlace.update(*this, value, useStdResultCtr); });
+    calculatePlace(resData, [this, resKey, useStdResultCtr](DT &res, int value) {
+    res.dst->tPlace.update(*this, resKey, value, useStdResultCtr);
+    });
 }
 
 bool oEvent::calculateTeamResults(vector<const oTeam*> &teams, int leg, ResultType resType) {
@@ -435,13 +456,14 @@ bool oEvent::calculateTeamResults(vector<const oTeam*> &teams, int leg, ResultTy
     else {
       p = 0;
     }
+    int resKey = resultKey(1, 2, resType, false);
 
     bool tmpDefaultResult = resType == ResultType::ClassResultDefault || resType == ResultType::TotalResultDefault;
     if (resType == ResultType::TotalResult || resType == ResultType::TotalResultDefault) {
-      it->getTeamPlace(sleg).totalP.update(*this, p, tmpDefaultResult);
+      it->getTeamPlace(sleg).totalP.update(*this, resKey, p, tmpDefaultResult);
     }
     else {
-      it->getTeamPlace(sleg).p.update(*this, p, tmpDefaultResult);
+      it->getTeamPlace(sleg).p.update(*this, resKey, p, tmpDefaultResult);
       res.version = tmpDefaultResult ? -1 : dataRevision;
       res.status = it->tmpCachedStatus;
       res.time = it->tmpDefinedTime;
@@ -575,6 +597,7 @@ void oEvent::calculateModuleTeamResults(const set<int> &cls, vector<oTeam *> &te
   }
   typedef ResultCalcData<const oTeam> DT;
   typedef ResultCalcData<const oRunner> DR;
+  int resKey = resultKey();
 
   vector<DR> legResultsData;
   legResultsData.reserve(Runners.size());
@@ -600,7 +623,7 @@ void oEvent::calculateModuleTeamResults(const set<int> &cls, vector<oTeam *> &te
       int clsId = t->getClassId(true);
       if (t->tComputedStatus == StatusOK && t->inputStatus == StatusOK) {
         if (rgClasses.count(clsId))
-          totScore = numeric_limits<int>::max() - (7 * 24 * 3600 * max(1, (1 + t->getRogainingPoints(true, true))) - (t->tComputedTime + t->inputTime));
+          totScore = numeric_limits<int>::max() - (7 * 24 * timeConstHour * max(1, (1 + t->getRogainingPoints(true, true))) - (t->tComputedTime + t->inputTime));
         else
           totScore = t->tComputedTime + t->inputTime;
       }
@@ -608,8 +631,8 @@ void oEvent::calculateModuleTeamResults(const set<int> &cls, vector<oTeam *> &te
       resData.emplace_back(clsId, totScore, t);
 
       for  (int i = 0; i < t->getNumRunners(); i++) {
-        t->getTeamPlace(i).p.update(*this, t->getTempResult().getPlace(), false);
-        t->getTeamPlace(i).totalP.update(*this, t->getTempResult().getPlace(), false);
+        t->getTeamPlace(i).p.update(*this, resKey, t->getTempResult().getPlace(), false);
+        t->getTeamPlace(i).totalP.update(*this, resKey, t->getTempResult().getPlace(), false);
         oTeam::ComputedLegResult res;
         res.version = dataRevision;
         int legTime = 0;
@@ -655,7 +678,7 @@ void oEvent::calculateModuleTeamResults(const set<int> &cls, vector<oTeam *> &te
           int legScore = -1;
           if (res.status == StatusOK) {
             if (rgClasses.count(clsId))
-              legScore = numeric_limits<int>::max() - (7 * 24 * 3600 * max(1, (1 + t->Runners[i]->tComputedPoints)) - res.time);
+              legScore = numeric_limits<int>::max() - (7 * 24 * timeConstHour * max(1, (1 + t->Runners[i]->tComputedPoints)) - res.time);
             else
               legScore = res.time;
           }
@@ -682,14 +705,14 @@ void oEvent::calculateModuleTeamResults(const set<int> &cls, vector<oTeam *> &te
       }
     }
 
-    calculatePlace(legResultsData, [this](DR &res, int value) {
-      res.dst->tPlace.update(*this, value, false);
-      res.dst->tTotalPlace.update(*this, value, false); });
+    calculatePlace(legResultsData, [this, resKey](DR &res, int value) {
+      res.dst->tPlace.update(*this, resKey, value, false);
+      res.dst->tTotalPlace.update(*this, resKey, value, false); });
     
     // Calculate and store total result
-    calculatePlace(resData, [this](DT &res, int value) {
+    calculatePlace(resData, [this, resKey](DT &res, int value) {
       for (int i = 0; i < res.dst->getNumRunners(); i++) {
-        res.dst->getTeamPlace(i).totalP.update(*this, value, false);
+        res.dst->getTeamPlace(i).totalP.update(*this, resKey, value, false);
       }});
   }
 }
@@ -1049,8 +1072,9 @@ void oEvent::computePreliminarySplitResults(const set<int> &classes) const {
       if (ccId <= 0)
         continue;
       int crs = r->getCourse(false)->getId();
-      int time = p.getTimeInt() - r->getStartTime(); //XXX Team time
-      r->tOnCourseResults.emplace_back(ccId, courseCCid2CourseIx[make_pair(crs, ccId)], time);
+      int time = p.getTimeInt() - r->getStartTime(); 
+      int teamTotalTime = time + (r->tInTeam ? r->tInTeam->getTotalRunningTimeAtLegStart(r->tLeg, false) : 0);
+      r->tOnCourseResults.emplace_back(ccId, courseCCid2CourseIx[make_pair(crs, ccId)], time, teamTotalTime);
       int clsId = r->getClassId(true);
       int leg = r->getLegNumber();
       if (cls->getQualificationFinal())
@@ -1070,6 +1094,8 @@ void oEvent::computePreliminarySplitResults(const set<int> &classes) const {
 
     const set<int> &expectedCCid = classLeg2ExistingCCId[make_pair(clsId, leg)];
     size_t nRT = 0;
+    int teamTotalOff = r.tInTeam ? r.tInTeam->getTotalRunningTimeAtLegStart(r.tLeg, false) : 0;
+
     for (auto &radioTimes : r.tOnCourseResults.res) {
       if (expectedCCid.count(radioTimes.courseControlId))
         nRT++;
@@ -1089,8 +1115,9 @@ void oEvent::computePreliminarySplitResults(const set<int> &classes) const {
               }
             }
             if (!added) {
-              int time = p.getTimeInt() - r.getStartTime(); //XXX Team time
-              r.tOnCourseResults.emplace_back(ccId, p.tIndex, time);
+              int time = p.getTimeInt() - r.getStartTime(); 
+              int teamTotalTime = time + teamTotalOff;
+              r.tOnCourseResults.emplace_back(ccId, p.tIndex, time, teamTotalTime);
             }
           }
         }
@@ -1099,11 +1126,13 @@ void oEvent::computePreliminarySplitResults(const set<int> &classes) const {
   }
 
   vector<tuple<int, int, int>> timeRunnerIx;
+  vector<tuple<int, int, int>> totalTimeRunnerIx;
+
   for (auto rList : runnerByClassLeg) {
     auto &rr = rList.second;
     pClass cls = getClass(rList.first.first);
     assert(cls);
-    bool totRes = cls->getNumStages() > 1;
+    //bool totRes = cls->getNumStages() > 1;
 
     set<int> &legCCId = classLeg2ExistingCCId[rList.first];
     legCCId.insert(oPunch::PunchFinish);
@@ -1111,18 +1140,17 @@ void oEvent::computePreliminarySplitResults(const set<int> &classes) const {
       // Leg with negative sign
       int negLeg = 0;
       timeRunnerIx.clear();
+      totalTimeRunnerIx.clear();
+
       int nRun = rr.size();
       if (ccId == oPunch::PunchFinish) {
         negLeg = -1000; //Finish, smallest number
         for (int j = 0; j < nRun; j++) {
           auto r = rr[j];
-          if (r->prelStatusOK(true, false)) {
-            int time;
-            if (!r->tInTeam || !totRes)
-              time = r->getRunningTime(true);
-            else {
-              time = r->tInTeam->getLegRunningTime(r->tLeg, true, false);
-            }
+          if (r->prelStatusOK(true, false, false)) {
+            int time = r->getRunningTime(true);
+            int teamTotalTime = r->tInTeam ? r->tInTeam->getLegRunningTime(r->tLeg, true, false) : time;
+            
             int ix = -1;
             int nr = r->tOnCourseResults.res.size();
             for (int i = 0; i < nr; i++) {
@@ -1137,9 +1165,10 @@ void oEvent::computePreliminarySplitResults(const set<int> &classes) const {
               pCourse crs = r->getCourse(false);
               if (crs)
                 nc = crs->getNumControls();
-              r->tOnCourseResults.emplace_back(ccId, nc, time);
+              r->tOnCourseResults.emplace_back(ccId, nc, time, teamTotalTime);
             }
             timeRunnerIx.emplace_back(time, j, ix);
+            totalTimeRunnerIx.emplace_back(teamTotalTime, j, ix);
           }
         }
       }
@@ -1150,37 +1179,51 @@ void oEvent::computePreliminarySplitResults(const set<int> &classes) const {
           for (int i = 0; i < nr; i++) {
             if (r->tOnCourseResults.res[i].courseControlId == ccId) {
               timeRunnerIx.emplace_back(r->tOnCourseResults.res[i].time, j, i);
+              totalTimeRunnerIx.emplace_back(r->tOnCourseResults.res[i].teamTotalTime, j, i);
+
               negLeg = min(negLeg, -r->tOnCourseResults.res[i].controlIx);
               break;
             }
           }
         }
       }
-      sort(timeRunnerIx.begin(), timeRunnerIx.end());
+      
+      auto computeResult = [&rr, &negLeg](vector<tuple<int, int, int>>& timeRunnerIx, bool total) {
+        sort(timeRunnerIx.begin(), timeRunnerIx.end());
 
-      int place = 0;
-      int time = 0;
-      int leadTime = 0;
-      int numPlace = timeRunnerIx.size();
-      for (int i = 0; i < numPlace; i++) {
-        int ct = get<0>(timeRunnerIx[i]);
-        if (time != ct) {
-          time = ct;
-          place = i + 1;
-          if (leadTime == 0)
-            leadTime = time;
-        }
-        auto r = rr[get<1>(timeRunnerIx[i])];
-        int locIx = get<2>(timeRunnerIx[i]);
-        r->tOnCourseResults.res[locIx].place = place;
-        r->tOnCourseResults.res[locIx].after = time - leadTime;
+        int place = 0;
+        int time = 0;
+        int leadTime = 0;
+        int numPlace = timeRunnerIx.size();
+        for (int i = 0; i < numPlace; i++) {
+          int ct = get<0>(timeRunnerIx[i]);
+          if (time != ct) {
+            time = ct;
+            place = i + 1;
+            if (leadTime == 0)
+              leadTime = time;
+          }
+          auto r = rr[get<1>(timeRunnerIx[i])];
+          int locIx = get<2>(timeRunnerIx[i]);
+          if (total) {
+            r->tOnCourseResults.res[locIx].teamTotalPlace = place;
+            r->tOnCourseResults.res[locIx].teamTotalAfter = time - leadTime;
+          }
+          else {
+            r->tOnCourseResults.res[locIx].place = place;
+            r->tOnCourseResults.res[locIx].after = time - leadTime;
 
-        int &legWithTimeIndexNeg = r->currentControlTime.first;
-        if (negLeg < legWithTimeIndexNeg) {
-          legWithTimeIndexNeg = negLeg;
-          r->currentControlTime.second = ct;
+            int& legWithTimeIndexNeg = r->currentControlTime.first;
+            if (negLeg < legWithTimeIndexNeg) {
+              legWithTimeIndexNeg = negLeg;
+              r->currentControlTime.second = ct;
+            }
+          }
         }
-      }
+      };
+
+      computeResult(timeRunnerIx, false);
+      computeResult(totalTimeRunnerIx, true);
     }
   }
 }

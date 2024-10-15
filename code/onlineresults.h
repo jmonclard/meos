@@ -1,7 +1,7 @@
 ﻿#pragma once
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2024 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -35,6 +35,8 @@ protected:
   wstring prefix;
   int cmpId;
   set<int> classes;
+  bool allClasses = false;
+
   set<int> controls;
 
   enum class DataType {
@@ -59,7 +61,7 @@ protected:
 
   wstring getExportFileName() const;
   int bytesExported;
-  DWORD lastSync;
+  uint64_t lastSync;
 
   vector<string> errorLines;
   void formatError(gdioutput &gdi);

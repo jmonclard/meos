@@ -1,9 +1,33 @@
+/************************************************************************
+    MeOS - Orienteering Software
+    Copyright (C) 2009-2024 Melin Software HB
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License fro more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+    Melin Software HB - software@melin.nu - www.melin.nu
+    Eksoppsv√§gen 16, SE-75646 UPPSALA, Sweden
+
+************************************************************************/
+
 #include "StdAfx.h"
 
 #include "machinecontainer.h"
 #include "meos_util.h"
 #include "xmlparser.h"
 #include "gdioutput.h"
+#include "TabAuto.h"
+
 int MachineContainer::AbstractMachine::getInt(const string &v) const {
   return _wtoi(getString(v).c_str());
 }
@@ -20,7 +44,7 @@ vector<int> MachineContainer::AbstractMachine::getVectorInt(const string &v) con
   vector<wstring> sp;
   split(s, L",", sp);
   vector<int> res(sp.size());
-  for (int j = 0; j < sp.size(); j++)
+  for (size_t j = 0; j < sp.size(); j++)
     res[j] = _wtoi(sp[j].c_str());
   return res;
 }
@@ -40,7 +64,7 @@ void MachineContainer::AbstractMachine::set(const string &name, int v) {
 
 void MachineContainer::AbstractMachine::set(const string &name, const vector<int> &v) {
   wstring &r = props[name];
-  for (int j = 0; j < v.size(); j++) {
+  for (size_t j = 0; j < v.size(); j++) {
     if (j == 0)
       r = itow(v[j]);
     else
@@ -52,7 +76,7 @@ void MachineContainer::AbstractMachine::load(const xmlobject &data) {
   xmlList out;
   data.getObjects(out);
   for (auto &x : out) {
-    props[x.getName()] = x.getw();
+    props[x.getName()] = x.getWStr();
   }
 }
 
@@ -66,7 +90,7 @@ namespace {
   string encode(const string &in) {
     string out;
     out.reserve(in.length());
-    for (int j = 0; j < in.length(); j++) {
+    for (size_t j = 0; j < in.length(); j++) {
       if (in[j] == '|' || in[j] == '$' || in[j] == '%') {
         out.push_back('%');
         if (in[j] == '|')
@@ -85,14 +109,14 @@ namespace {
   string decode(const string &in) {
     string out;
     out.reserve(in.length());
-    for (int j = 0; j < in.length(); j++) {
+    for (size_t j = 0; j < in.length(); j++) {
       if (in[j] == '%') {
         j++;
         if (j < in.length()) {
           if (in[j] == '1')
             out.push_back('|');
           else if (in[j] == '2')
-            out.push_back('ß');
+            out.push_back('$');
           else if (in[j] == '3')
             out.push_back('%');
         }
@@ -168,8 +192,19 @@ void MachineContainer::save(xmlparser &data) {
 void MachineContainer::load(const string &data) {
   vector<string> parts;
   split(data, "$", parts);
-  for (int j = 0; j + 2 < parts.size(); j++) {
+  if ((parts.size() % 3) != 0) {
+    // Data is corrupt. Repair by delete...
+    if (parts.size() > 3)
+      parts.resize(3);
+  }
+
+  machines.clear();
+  for (size_t j = 0; j + 2 < parts.size(); j+=3) {
     const string &type = parts[j];
+
+    if (AutoMachine::getType(type) == Machines::Unknown)
+      continue;
+
     wstring tag = gdioutput::fromUTF8(decode(parts[j + 1]));
     auto res = machines.emplace(make_pair(type, tag), MachineContainer::AbstractMachine());
     if (res.second)
@@ -199,4 +234,14 @@ string MachineContainer::save() {
     out.append(m);
   }
   return out;
+}
+
+void MachineContainer::rename(const string& type, const wstring& oldName, const wstring& newName) {
+  if (newName != oldName) {
+    auto res = machines.find(make_pair(type, oldName));
+    if (res != machines.end()) {
+      machines.emplace(make_pair(type, newName), res->second);
+      machines.erase(res);
+    }
+  }
 }

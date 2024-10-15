@@ -1,6 +1,6 @@
 ﻿/************************************************************************
 MeOS - Orienteering Software
-Copyright (C) 2009-2021 Melin Software HB
+Copyright (C) 2009-2024 Melin Software HB
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -40,8 +40,11 @@ Eksoppsvägen 16, SE-75646 UPPSALA, Sweden
 #include "HTMLWriter.h"
 #include "RunnerDB.h"
 #include "image.h"
+//#include "onlineinput.h"
 
+extern Image image;
 using namespace restbed;
+using namespace std;
 
 vector< shared_ptr<RestServer> > RestServer::startedServers;
 
@@ -391,27 +394,44 @@ void RestServer::computeInternal(oEvent &ref, shared_ptr<RestServer::EventReques
   }
   else if (rq->parameters.count("page") > 0) {
     string what = rq->parameters.find("page")->second;
-    auto &writer = HTMLWriter::getWriter(HTMLWriter::TemplateType::Page, what);
+    auto& writer = HTMLWriter::getWriter(HTMLWriter::TemplateType::Page, what, {});
     writer.getPage(ref, rq->answer);
   }
   else if (rq->parameters.count("enter") > 0) {
-    auto &writer = HTMLWriter::getWriter(HTMLWriter::TemplateType::Page, "entryform");
+    auto fields = ref.getExtraFields(oEvent::ExtraFieldContext::DirectEntry);
+    
+    vector<pair<string, wstring>> fn;
+    auto makeUpper = [](string& v) -> string& {
+      for (char& c : v)
+        c = toupper(c);
+      return v;
+    };
+
+    for (auto& [field, name] : fields) {
+      fn.emplace_back(makeUpper(oEvent::extraFieldName(field)), name);
+    }
+    auto &writer = HTMLWriter::getWriter(HTMLWriter::TemplateType::Page, "entryform", fn);
     writer.getPage(ref, rq->answer);
   }
   else if (rq->parameters.count("image") > 0) {
-    ifstream fin;
-    string image = rq->parameters.find("image")->second;
-    if (imageCache.count(image)) {
-      rq->image = imageCache[image];
+    string imageId = rq->parameters.find("image")->second;
+    if (imageCache.count(imageId)) {
+      rq->image = imageCache[imageId];
     }
-    if (image == "meos") {      
-      imageCache[image] = rq->image = Image::loadResourceToMemory(MAKEINTRESOURCE(513), _T("PNG"));
+    else if (imageId == "meos") {      
+      imageCache[imageId] = rq->image = Image::loadResourceToMemory(MAKEINTRESOURCE(513), _T("PNG"));
+    }
+    else if (imageId.length() > 2 && imageId[0] == 'I' && imageId[1] == 'D') {
+      uint64_t imgId = _strtoui64(imageId.c_str() + 2, nullptr, 10);
+      ref.loadImage(imgId);
+      rq->image = image.getRawData(imgId);
     }
     else {
       wchar_t fn[260];
-      if (image.find_first_of("\\/.?*") == string::npos) {
-        wstring par = wideParam(image) + L".png";
+      if (imageId.find_first_of("\\/.?*") == string::npos) {
+        wstring par = wideParam(imageId) + L".png";
         getUserFile(fn, par.c_str());
+        ifstream fin;
         fin.open(fn, ios::binary);
         if (fin.good()) {
           fin.seekg(0, ios::end);
@@ -421,7 +441,7 @@ void RestServer::computeInternal(oEvent &ref, shared_ptr<RestServer::EventReques
           fin.read((char *)&rq->image[0], rq->image.size());
           fin.close();
 
-          imageCache[image] = rq->image;
+          imageCache[imageId] = rq->image;
         }
       }
     }
@@ -437,18 +457,19 @@ void RestServer::computeInternal(oEvent &ref, shared_ptr<RestServer::EventReques
 
       if (!res->second.second) {
         res->second.second = make_shared<oListInfo>();
-        ref.generateListInfo(res->second.first, *res->second.second);
+        ref.generateListInfo(gdiPrint, res->second.first, *res->second.second);
       }
       ref.generateList(gdiPrint, true, *res->second.second, false);
-      wstring exportFile = getTempFile();
-      HTMLWriter::write(gdiPrint, exportFile, ref.getName(), 30, res->second.first, ref);
-
-      ifstream fin(exportFile.c_str());
-      string rbf;
+      //wstring exportFile = getTempFile();
+      ostringstream fout;
+      HTMLWriter::write(gdiPrint, fout, ref.getName(), 30, res->second.first, ref);
+      rq->answer = fout.str();
+      //ifstream fin(exportFile.c_str());
+      /*string rbf;
       while (std::getline(fin, rbf)) {
         rq->answer += rbf;
       }
-      removeTempFile(exportFile);
+      removeTempFile(exportFile);*/
     }
     else {
       rq->answer = "Error (MeOS): Unknown list";
@@ -520,8 +541,9 @@ void RestServer::getData(oEvent &oe, const string &what, const multimap<string, 
     set<int> cls;
     if (param.count("class") > 0)
       getSelection(param.find("class")->second, cls);
+    pair<string, string> preferredIdTypes;
 
-    oe.exportIOFSplits(oEvent::IOF30, exportFile.c_str(), false, useUTC, cls, -1, false, false, true, false);
+    oe.exportIOFSplits(oEvent::IOF30, exportFile.c_str(), false, useUTC, cls, preferredIdTypes, -1, false, false, true, false, false);
     ifstream fin(exportFile.c_str());
     string rbf;
     while (std::getline(fin, rbf)) {
@@ -536,8 +558,9 @@ void RestServer::getData(oEvent &oe, const string &what, const multimap<string, 
     set<int> cls;
     if (param.count("class") > 0)
       getSelection(param.find("class")->second, cls);
+    pair<string, string> preferredIdTypes;
 
-    oe.exportIOFStartlist(oEvent::IOF30, exportFile.c_str(), useUTC, cls, false, true, false);
+    oe.exportIOFStartlist(oEvent::IOF30, exportFile.c_str(), useUTC, cls, preferredIdTypes, false, true, false, false);
     ifstream fin(exportFile.c_str());
     string rbf;
     while (std::getline(fin, rbf)) {
@@ -673,6 +696,12 @@ void RestServer::getData(oEvent &oe, const string &what, const multimap<string, 
         sampleClass = tt[0];
     }
       
+    bool includePreliminary = true;
+    if (param.count("preliminary")) {
+      const string& prl = param.find("preliminary")->second;
+      includePreliminary = atoi(prl.c_str()) > 0 || _stricmp(prl.c_str(), "true") == 0;
+    }
+
     string resTag;
     if (param.count("module") > 0)
       resTag = param.find("module")->second;
@@ -831,7 +860,8 @@ void RestServer::getData(oEvent &oe, const string &what, const multimap<string, 
         r.swap(r2);
       }
 
-      GeneralResult::calculateIndividualResults(r, controlId, totalResult, inclRunnersInForest, resTag, resType, inputNumber, oe, results);
+      GeneralResult::calculateIndividualResults(r, controlId, totalResult, inclRunnersInForest, includePreliminary, 
+                                                resTag, resType, inputNumber, oe, results);
 
 
       if (resType ==  oListInfo::Classwise)
@@ -854,7 +884,7 @@ void RestServer::getData(oEvent &oe, const string &what, const multimap<string, 
       int place = -1;
       int cClass = -1;
       int counter = 0;
-      for (const auto &res : results) {
+      for (auto &res : results) {
         if (res.src->getClassId(true) != cClass) {
           counter = 0;
           place = 1;
@@ -863,6 +893,10 @@ void RestServer::getData(oEvent &oe, const string &what, const multimap<string, 
         if (++counter > limit && (place != res.place || res.status != StatusOK))
           continue;
         place = res.place;
+
+        if (!includePreliminary && res.src->getStatus() == StatusUnknown)
+          res.status = StatusUnknown;
+
         writePerson(res, reslist, true, resType == oListInfo::Coursewise, rProp);
       }
       reslist.endTag();
@@ -1111,11 +1145,11 @@ void RestServer::lookup(oEvent &oe, const string &what, const multimap<string, s
       xml.write("Club", { make_pair("id", itow(r->getClubId())) }, r->getClub());
       xml.write("Class", { make_pair("id", itow(r->getClassId(true))) }, r->getClass(true));
       xml.write("Card", r->getCardNo());
-      xml.write("Status", {make_pair("code", itow(r->getStatusComputed()))}, r->getStatusS(true, true));
+      xml.write("Status", {make_pair("code", itow(r->getStatusComputed(true)))}, r->getStatusS(true, true));
       xml.write("Start", r->getStartTimeS());
-      if (r->getFinishTime() > 0 && r->getStatusComputed() != StatusNoTiming && !r->noTiming()) {
-        xml.write("Finish", r->getFinishTimeS());
-        xml.write("RunningTime", r->getRunningTimeS(true));
+      if (r->getFinishTime() > 0 && r->getStatusComputed(true) != StatusNoTiming && !r->noTiming()) {
+        xml.write("Finish", r->getFinishTimeS(true, SubSecond::Auto));
+        xml.write("RunningTime", r->getRunningTimeS(true, SubSecond::Auto));
         xml.write("Place", r->getPlaceS());
         xml.write("TimeAfter", formatTime(r->getTimeAfter()));
       }
@@ -1127,12 +1161,12 @@ void RestServer::lookup(oEvent &oe, const string &what, const multimap<string, s
       }
       if ((r->getFinishTime() > 0 || r->getCard() != nullptr) && 
           r->getCourse(false) &&
-          r->getStatusComputed() != StatusNoTiming &&
+          r->getStatusComputed(true) != StatusNoTiming &&
           !r->noTiming()) {
         auto &sd = r->getSplitTimes(false);
         vector<int> after;
         r->getLegTimeAfter(after);
-        vector<int> afterAcc;
+        vector<oRunner::ResultData> afterAcc;
         r->getLegTimeAfterAcc(afterAcc);
         vector<int> delta;
         r->getSplitAnalysis(delta);
@@ -1151,7 +1185,7 @@ void RestServer::lookup(oEvent &oe, const string &what, const multimap<string, s
             xml.startTag("Control", "number", itow(ix+1));
             xml.write("Name", ctrl->getName());
             if (s.hasTime()) {
-              xml.write("Time", formatTime(s.time - r->getStartTime()));
+              xml.write("Time", formatTime(s.getTime(true) - r->getStartTime()));
               
               if (size_t(ix) < delta.size() && size_t(ix) < after.size() && size_t(ix) < afterAcc.size()) {
                 if (after[ix] > 0)
@@ -1159,8 +1193,8 @@ void RestServer::lookup(oEvent &oe, const string &what, const multimap<string, s
                 else
                   analysis[0].second = L"";
 
-                if (afterAcc[ix] > 0)
-                  analysis[1].second = formatTime(afterAcc[ix]);
+                if (afterAcc[ix].get(0) > 0)
+                  analysis[1].second = formatTime(afterAcc[ix].get(false));
                 else
                   analysis[1].second = L"";
 
@@ -1172,7 +1206,7 @@ void RestServer::lookup(oEvent &oe, const string &what, const multimap<string, s
                 int place = r->getLegPlace(ix);
                 analysis[3].second = place > 0 ? itow(place) : L"";
                  
-                int placeAcc = r->getLegPlaceAcc(ix);
+                int placeAcc = r->getLegPlaceAcc(ix, false);
                 analysis[4].second = placeAcc > 0 ? itow(placeAcc) : L"";
 
                 xml.write("Analysis", analysis, L"");
@@ -1241,8 +1275,8 @@ void RestServer::lookup(oEvent &oe, const string &what, const multimap<string, s
       wstring sex = r->getSex();
       if (!sex.empty())
         xml.write("Sex", sex);
-      if (r->dbe().birthYear > 0) 
-        xml.write("BirthYear", itow(r->dbe().birthYear));
+      if (r->dbe().getBirthYear() > 0)
+        xml.write("BirthYear", itow(r->dbe().getBirthYear()));
 
       xml.endTag();
     }
@@ -1380,8 +1414,43 @@ void RestServer::newEntry(oEvent &oe, const multimap<string, string> &param, str
       }
     }
 
+    wstring birthyear, sex, nat;
+    wstring bib, phone, rank, text;
+    int dataA = 0; int dataB = 0;
+
     if (!permissionDenied && error.empty()) {
-      pRunner r = oe.addRunner(name, club, classId, cardNo, 0, true);
+      if (auto res = param.find("birthdate"); res != param.end())
+        birthyear = wideParam(res->second);
+      else if (auto res = param.find("birthyear"); res != param.end()) 
+        birthyear = wideParam(res->second);
+
+      if (auto res = param.find("sex"); res != param.end()) 
+        sex = wideParam(res->second);
+
+      if (auto res = param.find("nationality"); res != param.end()) 
+        nat = wideParam(res->second);
+     
+      if (auto res = param.find("bib"); res != param.end()) 
+        bib = wideParam(res->second);
+      
+      if (auto res = param.find("phone"); res != param.end())
+        phone = wideParam(res->second);
+
+      if (auto res = param.find("rank"); res != param.end())
+        rank = wideParam(res->second);
+
+      if (auto res = param.find("textA"); res != param.end())
+        text = wideParam(res->second);
+
+      if (auto res = param.find("dataA"); res != param.end())
+        dataA = atoi(res->second.c_str());
+
+      if (auto res = param.find("dataB"); res != param.end())
+        dataB = atoi(res->second.c_str());
+    }
+
+    if (!permissionDenied && error.empty()) {
+      pRunner r = oe.addRunner(name, club, classId, cardNo, birthyear, true);
       if (r && dbr) {
         r->init(*dbr, true);
       }
@@ -1389,13 +1458,14 @@ void RestServer::newEntry(oEvent &oe, const multimap<string, string> &param, str
       if (r) {
         int cf = 0;
         if (cardNo > 0 && oe.isHiredCard(cardNo)) {
-          cf = oe.getBaseCardFee();
-          r->getDI().setInt("CardFee", cf);
+          r->setRentalCard(true);
         }
         r->setFlag(oRunner::FlagAddedViaAPI, true);
         r->addClassDefaultFee(true);
         if (noTiming)
           r->setStatus(StatusNoTiming, true, oBase::ChangeType::Update, false);
+
+        r->setExtraPersonData(sex, nat, rank, phone, bib, text, dataA, dataB);
 
         r->synchronize();
         r->markClassChanged(-1);

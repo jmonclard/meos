@@ -1,10 +1,31 @@
+/************************************************************************
+    MeOS - Orienteering Software
+    Copyright (C) 2009-2024 Melin Software HB
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License fro more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+    Melin Software HB - software@melin.nu - www.melin.nu
+    Eksoppsvägen 16, SE-75646 UPPSALA, Sweden
+
+************************************************************************/
 
 #include "stdafx.h"
 
 #include "mysql/mysql.h"
 #include "mysqlwrapper.h"
 
-
+using namespace std;
 using namespace sqlwrapper;
 
 const char *CellWrapper::c_str() const {
@@ -38,11 +59,25 @@ CellWrapper::operator bool() const {
   return int(*this) != 0;
 }
 
-int64_t CellWrapper::ulonglong() const {
+int64_t CellWrapper::longlong() const {
   char *out;
   if (data != nullptr)
     return strtoll(data, &out, 10);
   return 0;
+}
+
+uint64_t CellWrapper::ulonglong() const {
+  char* out;
+  if (data != nullptr)
+    return strtoull(data, &out, 10);
+  return 0;
+}
+
+void CellWrapper::storeBlob(std::vector<uint8_t>& d) const {
+  if (data != nullptr) {
+    d.resize(length);
+    memcpy(d.data(), data, length);
+  }
 }
 
 bool CellWrapper::is_null() const {
@@ -95,12 +130,12 @@ const char *RowWrapper::raw_string(int ix) const {
 ResultBase::ResultBase(ConnectionWrapper *con, MYSQL_RES * res) : con(con), result(res) {
 }
 
-ResultBase::ResultBase(ResultBase &r) : con(r.con) {
+ResultBase::ResultBase(ResultBase &&r) : con(r.con) {
   result = r.result;
   r.result = nullptr;
 }
 
-const ResultBase &ResultBase::operator=(ResultBase &r) {
+const ResultBase &ResultBase::operator=(ResultBase &&r) {
   con = r.con;
   if (result)
     mysql_free_result(result);
@@ -347,7 +382,9 @@ void ConnectionWrapper::create_db(const string &db) {
 }
 
 void ConnectionWrapper::drop_db(const string &db) {
-  throw Exception("Not implemented");
+  string sql = "DROP DATABASE " + db + "";
+  if (mysql_query(get(), sql.c_str()) != 0)
+    throw Exception(mysql_error(mysql));
 }
 
 MYSQL *ConnectionWrapper::get() const {
@@ -357,7 +394,10 @@ MYSQL *ConnectionWrapper::get() const {
 }
 
 string ConnectionWrapper::server_info() const {  
-  return mysql_get_server_info(get());
+  const char *ptr =  mysql_get_server_info(get());
+  if (ptr)
+    return ptr;
+  return "";
 }
 
 bool ConnectionWrapper::connected() const {

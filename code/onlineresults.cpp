@@ -1,6 +1,6 @@
 ﻿/************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2024 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -43,9 +43,9 @@
 #include "progress.h"
 #include "machinecontainer.h"
 
-int AutomaticCB(gdioutput *gdi, int type, void *data);
+int AutomaticCB(gdioutput *gdi, GuiEventType type, BaseInfo* data);
 
-static int OnlineCB(gdioutput *gdi, int type, void *data) {
+static int OnlineCB(gdioutput *gdi, GuiEventType type, BaseInfo* data) {
   switch (type) {
     case GUI_BUTTON: {
       //Make a copy
@@ -103,6 +103,11 @@ void OnlineResults::settings(gdioutput &gdi, oEvent &oe, State state) {
     url = oe.getPropertyString("MOPURL", L"");
     file = oe.getPropertyString("MOPFolderName", L"");
     oe.getAllClasses(classes);
+    allClasses = true;
+  }
+  else if (allClasses && state == State::Edit) {
+    if (allClasses)
+      oe.getAllClasses(classes);
   }
 
   wstring time;
@@ -118,7 +123,7 @@ void OnlineResults::settings(gdioutput &gdi, oEvent &oe, State state) {
   gdi.addListBox("Classes", 200,300,0, L"Klasser:", L"", true);
   gdi.pushX();
   vector< pair<wstring, size_t> > d;
-  gdi.addItem("Classes", oe.fillClasses(d, oEvent::extraNone, oEvent::filterNone));
+  gdi.setItems("Classes", oe.fillClasses(d, oEvent::extraNone, oEvent::filterNone));
   gdi.setSelection("Classes", classes);
 
   gdi.popX();
@@ -283,6 +288,8 @@ void OnlineResults::save(oEvent &oe, gdioutput &gdi, bool doProcess) {
     getInfoServer().includeCourse(includeCourse);
   }
   gdi.getSelection("Classes", classes);
+  allClasses = classes.size() == oe.getNumClasses();
+
   if (sendToFile) {
     if (folder.empty()) {
       throw meosException("Mappnamnet får inte vara tomt.");
@@ -385,7 +392,7 @@ void OnlineResults::status(gdioutput &gdi)
 
 void OnlineResults::process(gdioutput &gdi, oEvent *oe, AutoSyncType ast) {
   errorLines.clear();
-  DWORD tick = GetTickCount();
+  uint64_t tick = GetTickCount64();
   if (lastSync + interval * 1000 > tick)
     return;
 
@@ -393,6 +400,9 @@ void OnlineResults::process(gdioutput &gdi, oEvent *oe, AutoSyncType ast) {
     return;
   ProgressWindow pwMain((sendToURL && ast == SyncNone) ? gdi.getHWNDTarget() : 0);
   pwMain.init();
+
+  if (allClasses)
+    oe->getAllClasses(classes);
 
   wstring t;
   int xmlSize = 0;
@@ -408,10 +418,10 @@ void OnlineResults::process(gdioutput &gdi, oEvent *oe, AutoSyncType ast) {
     t = getTempFile();
     if (dataType == DataType::IOF2)
       oe->exportIOFSplits(oEvent::IOF20, t.c_str(), false, false,
-                          classes, -1, false, true, true, false);
+                          classes, make_pair("",""), - 1, false, true, true, false, false);
     else if (dataType == DataType::IOF3)
       oe->exportIOFSplits(oEvent::IOF30, t.c_str(), false, false, 
-                          classes, -1, false, true, true, false);
+                          classes, make_pair("", ""), -1, false, true, true, false, false);
     else
       throw meosException("Internal error");
   }
@@ -450,6 +460,8 @@ void OnlineResults::process(gdioutput &gdi, oEvent *oe, AutoSyncType ast) {
       }
     }
 
+    constexpr int buffLimit = 64;
+
     try {
       if (sendToURL) {
         Download dwl;
@@ -461,6 +473,10 @@ void OnlineResults::process(gdioutput &gdi, oEvent *oe, AutoSyncType ast) {
 		    pair<wstring, wstring> mk2(L"pwd", passwd);
         key.push_back(mk2);
 
+        bool addedHeader = false;
+        bool forceZIP = false;
+        bool forceNoZip = false;
+
         bool moreToWrite = true;
         string tmp;
         const int total = max<int>(xmlbuff.size(), 1u);
@@ -470,12 +486,12 @@ void OnlineResults::process(gdioutput &gdi, oEvent *oe, AutoSyncType ast) {
           t = getTempFile();
           xmlparser xmlOut;
           xmlbuff.startXML(xmlOut, t);
-          moreToWrite = xmlbuff.commit(xmlOut, 250);
+          moreToWrite = xmlbuff.commit(xmlOut, buffLimit);
           xmlOut.endTag();
           xmlSize = xmlOut.closeOut();
           wstring result = getTempFile();
 
-          if (zipFile && xmlSize > 1024) {
+          if (!forceNoZip && ((zipFile && xmlSize > 1024) || forceZIP)) {
             wstring zipped = getTempFile();
             zip(zipped.c_str(), 0, vector<wstring>(1, t));
             removeTempFile(t);
@@ -487,6 +503,21 @@ void OnlineResults::process(gdioutput &gdi, oEvent *oe, AutoSyncType ast) {
           }
           else
             bytesExported +=xmlSize;
+
+
+          if (!addedHeader) {
+            if (zipFile) {
+              forceZIP = true;
+              pair<wstring, wstring> mk3(L"Content-Type", L"application/zip");
+              key.push_back(mk3);
+            }
+            else {
+              forceNoZip = true;
+              pair<wstring, wstring> mk3(L"Content-Type", L"text/plain");
+              key.push_back(mk3);
+            }
+            addedHeader = true;
+          }
 
           dwl.postFile(url, t, result, key, pw);
           removeTempFile(t);
@@ -551,7 +582,7 @@ void OnlineResults::process(gdioutput &gdi, oEvent *oe, AutoSyncType ast) {
         gdi.addInfoBox("", L"Online Results Error X#"+gdi.widen(ex.what()), 5000);
     }
 
-    lastSync = GetTickCount();
+    lastSync = GetTickCount64();
     exportCounter++;
   }
 }
@@ -619,6 +650,7 @@ void OnlineResults::loadMachine(oEvent &oe, const wstring &name) {
   if (!cnt)
     return;
   
+  AutoMachine::loadMachine(oe, name);
   file = cnt->getString("file");
   url = cnt->getString("url");
   prefix = cnt->getString("prefix");

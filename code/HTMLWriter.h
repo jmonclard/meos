@@ -1,6 +1,6 @@
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2024 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -37,7 +37,41 @@ class HTMLWriter {
 
   static map <string, shared_ptr<HTMLWriter>> tCache;
 
-  static string localize(const string &in);
+  string localize(const string &in);
+
+  enum class Function {
+    NONE,
+    IF,
+    ENDIF,
+    TEXTCOMMAND,
+  };
+
+  map<string, wstring> conditions;
+
+  Function parseFunc(const string& str, string& arg) const;
+  bool hasCondition(const string& arg) const;
+
+  class ImageWriter {
+    wstring destination;
+    const bool writeImages;
+    const wstring imageDirectoryDestination;
+    map<uint64_t, string> savedFiles;
+  public:
+    ImageWriter(const wstring& dst, bool writeImages) : destination(dst), writeImages(writeImages) {}
+
+
+    void write(std::ostream &fout, const string &xp, const string &yp, const wstring &img, int width, int height);
+  };
+
+  template<typename T, typename TI>
+  static void formatTL(std::ostream& fout,
+    ImageWriter& imageWriter,
+    const map< pair<gdiFonts, string>, pair<string, string> >& styles,
+    const T& tl,
+    double& yscale,
+    double& xscale,
+    int& offsetY,
+    int& offsetX);
 
 public:
 
@@ -45,12 +79,19 @@ public:
     tCache.clear();
   }
   
+  template<typename T>
+  void setConditions(const T& cond) {
+    conditions.clear();
+    for (auto &[key, value] : cond)
+      conditions[key] = value;
+  }
+
   enum class TemplateType {
     List,
     Page
   };
 
-  static const HTMLWriter &getWriter(TemplateType type, const string &tag);
+  static const HTMLWriter &getWriter(TemplateType type, const string &tag, const vector<pair<string, wstring>> &options);
   
   struct TemplateInfo {
     string tag;
@@ -64,7 +105,7 @@ public:
   void read(const wstring &fileName);
 
   void generate(gdioutput &gdi,
-                ostream &fout,
+                std::ostream &fout,
                 const wstring &title,
                 const wstring &contentDescription,
                 bool respectPageBreak,
@@ -76,10 +117,15 @@ public:
 
   void getPage(const oEvent &oe, string &out) const;
 
-  static void writeHTML(gdioutput &gdi, ostream &dout, const wstring &title, int refreshTimeOut, double scale);
+  static void writeHTML(gdioutput &gdi, std::ostream &dout, const wstring &title, 
+                        bool includeImages,
+                        const wstring& imageDirectoryDestination,
+                        int refreshTimeOut, double scale);
 
-  static void writeTableHTML(gdioutput &gdi, ostream &fout,
+  static void writeTableHTML(gdioutput &gdi, std::ostream &fout,
                              const wstring &title,
+                             bool includeImages,
+                             const wstring &imageDirectoryDestination,
                              bool simpleFormat,
                              int refreshTimeOut,
                              double scale);
@@ -92,23 +138,17 @@ public:
   static void writeHTML(gdioutput &gdi, const wstring &file, 
                         const wstring &title, int refreshTimeOut, double scale);
 
-  static void write(gdioutput &gdi, const wstring &file, const wstring &title, const wstring &contentsDescription,
-                    bool respectPageBreak, const string &typeTag, int refresh,
-                    int rows, int cols, int time_ms, int margin, double scale);
+  static void write(gdioutput& gdi, const wstring& file, const wstring& title, int refresh, oListParam& param, const oEvent& oe);
+  static void write(gdioutput& gdi, std::ostream& fout, const wstring& title, int refresh, oListParam& param, const oEvent& oe);
 
-  static void write(gdioutput &gdi, ostream &fout, const wstring &title, const wstring &contentsDescription,
-                    bool respectPageBreak, const string &typeTag, int refresh,
-                    int rows, int cols, int time_ms, int margin, double scale);
+  static void write(gdioutput& gdi, const wstring& file, const wstring& title, const wstring& contentsDescription,
+    bool respectPageBreak, const string& typeTag, int refresh,
+    int rows, int cols, int time_ms, int margin, double scale);
 
-  static void write(gdioutput &gdi, const wstring &file, const wstring &title, int refresh, oListParam &param, const oEvent &oe);
-
-  template<typename T, typename TI>
-  static void formatTL(ostream &fout,
-                       const map< pair<gdiFonts, string>, pair<string, string> > &styles,
-                       const T &tl, 
-                       double &yscale,
-                       double &xscale,
-                       int &offsetY,
-                       int &offsetX);
-
+  static void write(gdioutput& gdi, std::ostream& fout, const wstring& title, 
+    bool includeImages,
+    const wstring& imageDirectoryDestination,
+    const wstring& contentsDescription,
+    bool respectPageBreak, const string& typeTag, int refresh,
+    int rows, int cols, int time_ms, int margin, double scale);
 };

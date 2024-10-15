@@ -1,7 +1,7 @@
 ﻿#pragma once
 /************************************************************************
     MeOS - Orienteering Software
-    Copyright (C) 2009-2021 Melin Software HB
+    Copyright (C) 2009-2024 Melin Software HB
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -57,6 +57,7 @@ protected:
   void processTeamLineups(oEvent &oe, const xmlList &updates);
   void processEntries(oEvent &oe, const xmlList &entries);
 
+
   void processPunches(oEvent &oe, const xmlList &punches);
   void processPunches(oEvent &oe, list< vector<wstring> > &rocData);
 
@@ -68,11 +69,13 @@ protected:
   void loadMachine(oEvent &oe, const wstring &name) final;
 
 public:
-
   int processButton(gdioutput &gdi, ButtonInfo &bi);
+
+  void updateLabel(gdioutput& gdi);
 
   void save(oEvent &oe, gdioutput &gdi, bool doProcess) final;
   void settings(gdioutput &gdi, oEvent &oe, State state) final;
+  static void controlMappingView(gdioutput& gdi, GUICALLBACK cb, int widgetId);
   OnlineInput *clone() const {return new OnlineInput(*this);}
   void status(gdioutput &gdi) final;
   void process(gdioutput &gdi, oEvent *oe, AutoSyncType ast) final;

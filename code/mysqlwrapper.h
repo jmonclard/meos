@@ -1,7 +1,30 @@
 #pragma once
+/************************************************************************
+    MeOS - Orienteering Software
+    Copyright (C) 2009-2024 Melin Software HB
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License fro more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+    Melin Software HB - software@melin.nu - www.melin.nu
+    Eksoppsvägen 16, SE-75646 UPPSALA, Sweden
+
+************************************************************************/
+
 
 #include <string>
 #include <map>
+#include <vector>
 #include "mysql/mysql.h"
 
 using std::string;
@@ -26,7 +49,9 @@ namespace sqlwrapper {
     operator int() const;
     operator unsigned int() const;
     operator bool() const;
-    int64_t ulonglong() const;
+    int64_t longlong() const;
+    uint64_t ulonglong() const;
+    void storeBlob(std::vector<uint8_t>& d) const;
     bool is_null() const;
   };
 
@@ -55,8 +80,10 @@ namespace sqlwrapper {
     friend class QueryWrapper;
     friend class RowWrapper;
   public:
-    ResultBase(ResultBase &r);
-    const ResultBase &operator=(ResultBase &);
+    ResultBase(ResultBase &&r);
+    const ResultBase &operator=(ResultBase &&);
+    ResultBase(const ResultBase& r) = delete;
+    const ResultBase& operator=(const ResultBase&) = delete;
 
     virtual ~ResultBase();
     int field_num(const string &field);
@@ -69,11 +96,13 @@ namespace sqlwrapper {
     friend class RowWrapper;
   public:
     ResultWrapper() : ResultBase(nullptr, nullptr) {}
-    ResultWrapper(ResultWrapper &r) : ResultBase(r) {}
-    const ResultBase &operator=(ResultBase &r) {
-      ResultBase::operator=(r); 
+    ResultWrapper(ResultWrapper &&r) : ResultBase(std::move(r)) {}
+    ResultWrapper(const ResultWrapper& r) = delete;
+    const ResultBase &operator=(ResultWrapper &&r) {
+      ResultBase::operator=(std::move(r)); 
       return *this;
     }
+    const ResultBase& operator=(const ResultBase& r) = delete;
     
     //ResultWrapper(ResultWrapper &r);
     //~ResultWrapper();
@@ -86,15 +115,17 @@ namespace sqlwrapper {
   };
 
   class ResUseWrapper : public ResultBase {
-    ResUseWrapper(ConnectionWrapper &con, MYSQL_RES *result);
+    ResUseWrapper(ConnectionWrapper& con, MYSQL_RES* result);
     friend class QueryWrapper;
     friend class RowWrapper;
   public:
-    ResUseWrapper(ResUseWrapper &r) : ResultBase(r) {}
-    const ResUseWrapper &operator=(ResUseWrapper &r) {
-      ResultBase::operator=(r);
+    ResUseWrapper(ResUseWrapper&& r) : ResultBase(std::move(r)) {}
+    const ResUseWrapper& operator=(ResUseWrapper&& r) {
+      ResultBase::operator=(std::move(r));
       return *this;
     }
+    ResUseWrapper(const ResUseWrapper& r) = delete;
+    const ResUseWrapper& operator=(const ResUseWrapper& r) = delete;
 
     operator bool() const;
     RowWrapper fetch_row();
